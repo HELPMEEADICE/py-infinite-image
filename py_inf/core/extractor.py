@@ -103,13 +103,34 @@ def _extract_video_metadata(path: Path) -> MediaMetadata:
 
 def _apply_parameter_text(metadata: MediaMetadata, text: str) -> None:
     metadata.raw_json = text
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    if not lines:
+    if not text.strip():
         return
-    metadata.prompt = lines[0]
-    if len(lines) > 1 and lines[1].lower().startswith("negative prompt:"):
-        metadata.negative_prompt = lines[1].split(":", 1)[1].strip()
-    for match in re.finditer(r"([A-Za-z ]+):\s*([^,\n]+)", text):
+
+    prompt_block = text.strip()
+    negative_block = ""
+    params_line = ""
+
+    negative_match = re.search(r"\nNegative\s+Prompt:\s*", text, flags=re.IGNORECASE)
+    if negative_match:
+        prompt_block = text[:negative_match.start()].strip()
+        remainder = text[negative_match.end():].lstrip()
+        params_match = re.search(r"\nSteps:\s*", remainder, flags=re.IGNORECASE)
+        if params_match:
+            negative_block = remainder[:params_match.start()].strip()
+            params_line = remainder[params_match.start() + 1 :].strip()
+        else:
+            negative_block = remainder.strip()
+    else:
+        params_match = re.search(r"\nSteps:\s*", text, flags=re.IGNORECASE)
+        if params_match:
+            prompt_block = text[:params_match.start()].strip()
+            params_line = text[params_match.start() + 1 :].strip()
+
+    metadata.prompt = prompt_block or None
+    metadata.negative_prompt = negative_block or None
+
+    search_text = params_line or text
+    for match in re.finditer(r"([A-Za-z ]+):\s*([^,\n]+)", search_text):
         key = match.group(1).strip().lower()
         value = match.group(2).strip()
         if key == "model":
