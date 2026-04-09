@@ -134,6 +134,7 @@ class MediaGrid(ctk.CTkFrame):
         self.grid_shift_current = 0.0
         self.grid_shift_target = 0.0
         self.path_layout_transitions: dict[str, dict[str, float]] = {}
+        self.resize_after_id = None
 
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(0, weight=1)
@@ -200,6 +201,12 @@ class MediaGrid(ctk.CTkFrame):
 
     def _on_canvas_configure(self, _event=None) -> None:
         self.resize_anim_pending = True
+        if self.resize_after_id is not None:
+            self.after_cancel(self.resize_after_id)
+        self.resize_after_id = self.after(16, self._apply_canvas_resize)
+
+    def _apply_canvas_resize(self) -> None:
+        self.resize_after_id = None
         self._recompute_columns()
         self._update_scroll_region()
         self._update_visible_tiles(force=True)
