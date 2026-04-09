@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import math
 import tkinter as tk
 from queue import Empty, Queue
@@ -41,6 +42,59 @@ def _mix_color(start: str, end: str, amount: float) -> str:
     return _rgb_to_hex(mixed)
 
 
+def _get_display_frequency() -> int | None:
+    user32 = ctypes.windll.user32
+    enum_settings = ctypes.windll.user32.EnumDisplaySettingsW
+
+    class DevMode(ctypes.Structure):
+        _fields_ = [
+            ("dmDeviceName", ctypes.c_wchar * 32),
+            ("dmSpecVersion", ctypes.c_ushort),
+            ("dmDriverVersion", ctypes.c_ushort),
+            ("dmSize", ctypes.c_ushort),
+            ("dmDriverExtra", ctypes.c_ushort),
+            ("dmFields", ctypes.c_ulong),
+            ("dmOrientation", ctypes.c_short),
+            ("dmPaperSize", ctypes.c_short),
+            ("dmPaperLength", ctypes.c_short),
+            ("dmPaperWidth", ctypes.c_short),
+            ("dmScale", ctypes.c_short),
+            ("dmCopies", ctypes.c_short),
+            ("dmDefaultSource", ctypes.c_short),
+            ("dmPrintQuality", ctypes.c_short),
+            ("dmColor", ctypes.c_short),
+            ("dmDuplex", ctypes.c_short),
+            ("dmYResolution", ctypes.c_short),
+            ("dmTTOption", ctypes.c_short),
+            ("dmCollate", ctypes.c_short),
+            ("dmFormName", ctypes.c_wchar * 32),
+            ("dmLogPixels", ctypes.c_ushort),
+            ("dmBitsPerPel", ctypes.c_ulong),
+            ("dmPelsWidth", ctypes.c_ulong),
+            ("dmPelsHeight", ctypes.c_ulong),
+            ("dmDisplayFlags", ctypes.c_ulong),
+            ("dmDisplayFrequency", ctypes.c_ulong),
+            ("dmICMMethod", ctypes.c_ulong),
+            ("dmICMIntent", ctypes.c_ulong),
+            ("dmMediaType", ctypes.c_ulong),
+            ("dmDitherType", ctypes.c_ulong),
+            ("dmReserved1", ctypes.c_ulong),
+            ("dmReserved2", ctypes.c_ulong),
+            ("dmPanningWidth", ctypes.c_ulong),
+            ("dmPanningHeight", ctypes.c_ulong),
+        ]
+
+    dev_mode = DevMode()
+    dev_mode.dmSize = ctypes.sizeof(DevMode)
+    ENUM_CURRENT_SETTINGS = -1
+    if not enum_settings(None, ENUM_CURRENT_SETTINGS, ctypes.byref(dev_mode)):
+        return None
+    frequency = int(dev_mode.dmDisplayFrequency)
+    if frequency <= 1:
+        return None
+    return frequency
+
+
 class MediaGrid(ctk.CTkFrame):
     def __init__(self, master, image_cache, thumb_service, job_service, on_select, on_load_more, on_context=None, on_open=None, **kwargs):
         super().__init__(master, **kwargs)
@@ -70,6 +124,9 @@ class MediaGrid(ctk.CTkFrame):
         self.loading_phase = 0.0
         self.scroll_target_y = 0.0
         self.scroll_current_y = 0.0
+        self.refresh_rate_hz = self._detect_refresh_rate_hz()
+        self.tick_interval_ms = max(4, int(round(1000 / self.refresh_rate_hz)))
+        self.tick_scale = 60.0 / self.refresh_rate_hz
 
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(0, weight=1)
@@ -91,7 +148,7 @@ class MediaGrid(ctk.CTkFrame):
         self.canvas.bind("<Motion>", self._on_motion)
         self.canvas.bind("<Leave>", self._on_leave)
 
-        self.after(16, self._ui_tick)
+        self.after(self.tick_interval_ms, self._ui_tick)
 
     def render_items(self, items: list[dict], has_more: bool = False, reset: bool = True) -> None:
         if reset:
@@ -116,7 +173,7 @@ class MediaGrid(ctk.CTkFrame):
         self._refresh_visible_tile_visuals()
 
     def _ui_tick(self) -> None:
-        self.loading_phase = (self.loading_phase + 0.12) % (math.pi * 2)
+        self.loading_phase = (self.loading_phase + 0.12 * self.tick_scale) % (math.pi * 2)
         scroll_changed = self._step_smooth_scroll()
         self._drain_pending_results()
         animation_changed = self._step_animation_state()
@@ -124,7 +181,7 @@ class MediaGrid(ctk.CTkFrame):
         if scroll_changed or animation_changed:
             self._refresh_visible_tile_visuals()
         if self.winfo_exists():
-            self.after(16, self._ui_tick)
+            self.after(self.tick_interval_ms, self._ui_tick)
 
     def _on_canvas_configure(self, _event=None) -> None:
         self._recompute_columns()
@@ -414,8 +471,8 @@ class MediaGrid(ctk.CTkFrame):
 
     def _step_animation_state(self) -> bool:
         changed = False
-        changed |= self._step_strengths(self.hover_strengths, self.hover_path, 0.32, floor=0.0)
-        changed |= self._step_strengths(self.selected_strengths, self.selected_path, 0.24, floor=0.0)
+        changed |= self._step_strengths(self.hover_strengths, self.hover_path, 0.32 * self.tick_scale, floor=0.0)
+        changed |= self._step_strengths(self.selected_strengths, self.selected_path, 0.24 * self.tick_scale, floor=0.0)
         changed |= self._step_reveals()
         return changed or bool(self.pending_paths)
 
@@ -440,8 +497,9 @@ class MediaGrid(ctk.CTkFrame):
 
     def _step_reveals(self) -> bool:
         changed = False
+        decay = max(0.0, 1.0 - (1.0 - 0.78) * self.tick_scale)
         for path in list(self.reveal_strengths):
-            updated = self.reveal_strengths[path] * 0.78
+            updated = self.reveal_strengths[path] * decay
             if updated < 0.04:
                 self.reveal_strengths.pop(path, None)
             else:
@@ -465,7 +523,7 @@ class MediaGrid(ctk.CTkFrame):
                 self._apply_scroll_position()
                 return True
             return False
-        self.scroll_current_y += diff * 0.32
+        self.scroll_current_y += diff * min(0.85, 0.32 * self.tick_scale)
         self._apply_scroll_position()
         return True
 
@@ -481,6 +539,15 @@ class MediaGrid(ctk.CTkFrame):
         current_top = self.canvas.yview()[0] * total_height if total_height > 0 else 0.0
         self.scroll_target_y = current_top
         self.scroll_current_y = current_top
+
+    def _detect_refresh_rate_hz(self) -> int:
+        try:
+            refresh_rate = _get_display_frequency()
+        except Exception:
+            refresh_rate = None
+        if refresh_rate is None:
+            return 60
+        return max(60, min(240, refresh_rate))
 
     def _total_scroll_height(self) -> float:
         scroll_region = self.canvas.cget("scrollregion")
