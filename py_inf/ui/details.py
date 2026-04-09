@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import customtkinter as ctk
 
+PANEL_BG = "#1d1d1d"
+PANEL_FLASH = "#314763"
 PREVIEW_BG = "#242424"
 PREVIEW_FLASH = "#3e5f88"
 TEXTBOX_BG = "#1f1f1f"
@@ -27,17 +29,26 @@ def _mix_color(start: str, end: str, amount: float) -> str:
 
 class DetailsPanel(ctk.CTkFrame):
     def __init__(self, master, image_cache, thumb_service, **kwargs):
-        super().__init__(master, **kwargs)
+        super().__init__(master, fg_color=PANEL_BG, **kwargs)
         self.image_cache = image_cache
         self.thumb_service = thumb_service
         self.preview_after_id = None
         self.text_after_id = None
-        self.grid_rowconfigure(1, weight=1)
-        self.preview_label = ctk.CTkLabel(self, text="未选择项目", fg_color=PREVIEW_BG, corner_radius=12)
+        self.resize_after_id = None
+        self.panel_flash_after_id = None
+        self.last_width: int | None = None
+        self.content_shift = 0.0
+
+        self.content = ctk.CTkFrame(self, fg_color="transparent")
+        self.content.place(relx=0, rely=0, relwidth=1, relheight=1, x=0, y=0)
+        self.content.grid_rowconfigure(1, weight=1)
+        self.preview_label = ctk.CTkLabel(self.content, text="未选择项目", fg_color=PREVIEW_BG, corner_radius=12)
         self.preview_label.grid(row=0, column=0, padx=10, pady=10, sticky="ew")
-        self.text = ctk.CTkTextbox(self, width=280, fg_color=TEXTBOX_BG)
+        self.text = ctk.CTkTextbox(self.content, width=280, fg_color=TEXTBOX_BG)
         self.text.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
         self.text.configure(state="disabled")
+
+        self.bind("<Configure>", self._on_resize)
 
     def show_detail(self, item: dict | None) -> None:
         self._cancel_preview_animation()
@@ -84,6 +95,46 @@ class DetailsPanel(ctk.CTkFrame):
         self.text.configure(state="disabled")
         self._animate_preview_flash()
         self._animate_text_flash()
+
+    def _on_resize(self, event) -> None:
+        if event.widget is not self:
+            return
+        if self.last_width is None:
+            self.last_width = event.width
+            return
+        delta = event.width - self.last_width
+        self.last_width = event.width
+        if abs(delta) < 2:
+            return
+        if self.resize_after_id is not None:
+            self.after_cancel(self.resize_after_id)
+            self.resize_after_id = None
+        self.content_shift = max(-20.0, min(20.0, -delta * 0.22))
+        self._animate_resize_settle()
+        if abs(delta) >= 12:
+            self._animate_panel_flash()
+
+    def _animate_resize_settle(self) -> None:
+        if abs(self.content_shift) < 0.5:
+            self.content_shift = 0.0
+            self.content.place_configure(x=0)
+            self.resize_after_id = None
+            return
+        self.content.place_configure(x=int(round(self.content_shift)))
+        self.content_shift *= 0.72
+        self.resize_after_id = self.after(16, self._animate_resize_settle)
+
+    def _animate_panel_flash(self, step: int = 0) -> None:
+        phases = [0.55, 0.34, 0.18, 0.08, 0.0]
+        if self.panel_flash_after_id is not None and step == 0:
+            self.after_cancel(self.panel_flash_after_id)
+            self.panel_flash_after_id = None
+        if step >= len(phases):
+            self.configure(fg_color=PANEL_BG)
+            self.panel_flash_after_id = None
+            return
+        self.configure(fg_color=_mix_color(PANEL_BG, PANEL_FLASH, phases[step]))
+        self.panel_flash_after_id = self.after(34, lambda: self._animate_panel_flash(step + 1))
 
     def _animate_preview_flash(self, step: int = 0) -> None:
         phases = [1.0, 0.72, 0.44, 0.2, 0.0]
