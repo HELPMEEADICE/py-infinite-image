@@ -231,11 +231,6 @@ class MediaGrid(ctk.CTkFrame):
             self._apply_thumb(tile_id, path, cache_key, future)
 
     def _apply_thumb(self, tile_id: int, path: str, cache_key: str, future) -> None:
-        if tile_id >= len(self.tiles):
-            return
-        tile = self.tiles[tile_id]
-        if tile.get("bound_path") != path:
-            return
         try:
             pil_image = future.result()
         except Exception:
@@ -244,8 +239,13 @@ class MediaGrid(ctk.CTkFrame):
             return
         image = tk.PhotoImage(master=self.canvas, data=self._pil_to_png_data(pil_image))
         self.image_cache.set(cache_key, image)
-        if tile.get("bound_path") == path:
-            self.canvas.itemconfigure(tile["image_id"], image=image)
+        if tile_id < len(self.tiles):
+            tile = self.tiles[tile_id]
+            if tile.get("bound_path") == path:
+                self.canvas.itemconfigure(tile["image_id"], image=image)
+        for tile in self.tiles:
+            if tile.get("bound_path") == path:
+                self.canvas.itemconfigure(tile["image_id"], image=image)
 
     def _pil_to_png_data(self, pil_image) -> bytes:
         from io import BytesIO
