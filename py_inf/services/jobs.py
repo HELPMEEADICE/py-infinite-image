@@ -1,0 +1,15 @@
+from __future__ import annotations
+
+from concurrent.futures import ThreadPoolExecutor
+from typing import Callable, Any
+
+
+class JobService:
+    def __init__(self, max_workers: int = 4) -> None:
+        self.executor = ThreadPoolExecutor(max_workers=max_workers)
+
+    def submit(self, fn: Callable[..., Any], *args: Any, **kwargs: Any):
+        return self.executor.submit(fn, *args, **kwargs)
+
+    def shutdown(self) -> None:
+        self.executor.shutdown(wait=False, cancel_futures=True)
