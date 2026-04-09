@@ -127,6 +127,13 @@ class MediaGrid(ctk.CTkFrame):
         self.refresh_rate_hz = self._detect_refresh_rate_hz()
         self.tick_interval_ms = max(4, int(round(1000 / self.refresh_rate_hz)))
         self.tick_scale = 60.0 / self.refresh_rate_hz
+        self.last_start_x: int | None = None
+        self.last_columns = self.columns
+        self.resize_anim_pending = False
+        self.grid_shift_start = 0.0
+        self.grid_shift_current = 0.0
+        self.grid_shift_target = 0.0
+        self.path_layout_transitions: dict[str, dict[str, float]] = {}
 
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(0, weight=1)
@@ -157,6 +164,13 @@ class MediaGrid(ctk.CTkFrame):
             self.load_requested_for_count = -1
             self.scroll_target_y = 0.0
             self.scroll_current_y = 0.0
+            self.last_start_x = None
+            self.last_columns = self.columns
+            self.grid_shift_start = 0.0
+            self.grid_shift_current = 0.0
+            self.grid_shift_target = 0.0
+            self.path_layout_transitions.clear()
+            self.resize_anim_pending = False
             self.canvas.yview_moveto(0)
         else:
             existing = {item["path"] for item in self.items}
@@ -177,13 +191,15 @@ class MediaGrid(ctk.CTkFrame):
         scroll_changed = self._step_smooth_scroll()
         self._drain_pending_results()
         animation_changed = self._step_animation_state()
+        layout_changed = self._step_layout_animation()
         self._check_scroll_changes()
-        if scroll_changed or animation_changed:
+        if scroll_changed or animation_changed or layout_changed:
             self._refresh_visible_tile_visuals()
         if self.winfo_exists():
             self.after(self.tick_interval_ms, self._ui_tick)
 
     def _on_canvas_configure(self, _event=None) -> None:
+        self.resize_anim_pending = True
         self._recompute_columns()
         self._update_scroll_region()
         self._update_visible_tiles(force=True)
@@ -356,6 +372,10 @@ class MediaGrid(ctk.CTkFrame):
         canvas_width = max(self.canvas.winfo_width(), TILE_WIDTH + 2 * PADDING)
         total_grid_width = self.columns * TILE_WIDTH + max(0, self.columns - 1) * H_GAP
         start_x = max(PADDING, (canvas_width - total_grid_width) // 2)
+        previous_positions = {tile.get("bound_path"): (tile.get("base_x", 0), tile.get("base_y", 0)) for tile in self.tiles if tile.get("bound_path")}
+        previous_start_x = self.last_start_x if self.last_start_x is not None else start_x
+        previous_columns = self.last_columns
+        new_positions: dict[str, tuple[int, int]] = {}
 
         visible_items = self.items[start_index:end_index]
         for tile, item_index in zip(self.tiles, range(start_index, end_index)):
@@ -364,10 +384,15 @@ class MediaGrid(ctk.CTkFrame):
             col = item_index % self.columns
             x = start_x + col * (TILE_WIDTH + H_GAP)
             y = PADDING + row * self.row_height
+            new_positions[item["path"]] = (x, y)
             tile["base_x"] = x
             tile["base_y"] = y
             self._assign_tile(tile, item)
             self._position_tile(tile, x, y)
+
+        self._update_resize_animation(previous_positions, new_positions, previous_start_x, start_x, previous_columns)
+        self.last_start_x = start_x
+        self.last_columns = self.columns
 
         for tile in self.tiles[len(visible_items):]:
             for canvas_id in tile["canvas_ids"]:
@@ -378,6 +403,7 @@ class MediaGrid(ctk.CTkFrame):
 
     def _position_tile(self, tile: dict, x: int, y: int) -> None:
         path = tile.get("bound_path")
+        x, y = self._layout_position_for_path(path, x, y)
         hover_strength = self.hover_strengths.get(path, 0.0) if path else 0.0
         selected_strength = self.selected_strengths.get(path, 0.0) if path else 0.0
         reveal_strength = self.reveal_strengths.get(path, 0.0) if path else 0.0
@@ -511,6 +537,22 @@ class MediaGrid(ctk.CTkFrame):
             changed = True
         return changed
 
+    def _step_layout_animation(self) -> bool:
+        changed = False
+        if abs(self.grid_shift_target - self.grid_shift_current) > 0.4:
+            self.grid_shift_current += (self.grid_shift_target - self.grid_shift_current) * min(0.85, 0.28 * self.tick_scale)
+            changed = True
+        elif self.grid_shift_current != self.grid_shift_target:
+            self.grid_shift_current = self.grid_shift_target
+            changed = True
+        for path in list(self.path_layout_transitions):
+            transition = self.path_layout_transitions[path]
+            transition["t"] += min(1.0, 0.22 * self.tick_scale)
+            if transition["t"] >= 1.0:
+                self.path_layout_transitions.pop(path, None)
+            changed = True
+        return changed
+
     def _refresh_visible_tile_visuals(self) -> None:
         for tile in self.tiles:
             if tile.get("bound_path"):
@@ -530,6 +572,40 @@ class MediaGrid(ctk.CTkFrame):
         self.scroll_current_y += diff * min(0.85, 0.32 * self.tick_scale)
         self._apply_scroll_position()
         return True
+
+    def _update_resize_animation(self, previous_positions: dict[str, tuple[int, int]], new_positions: dict[str, tuple[int, int]], previous_start_x: int, start_x: int, previous_columns: int) -> None:
+        if not self.resize_anim_pending:
+            return
+        self.path_layout_transitions.clear()
+        if previous_columns == self.columns:
+            shift = previous_start_x - start_x
+            self.grid_shift_start = shift
+            self.grid_shift_current = shift
+            self.grid_shift_target = 0.0
+        else:
+            self.grid_shift_start = 0.0
+            self.grid_shift_current = 0.0
+            self.grid_shift_target = 0.0
+            for path, (new_x, new_y) in new_positions.items():
+                old_x, old_y = previous_positions.get(path, (new_x, new_y - 24))
+                self.path_layout_transitions[path] = {
+                    "from_x": float(old_x),
+                    "from_y": float(old_y),
+                    "to_x": float(new_x),
+                    "to_y": float(new_y),
+                    "t": 0.0,
+                }
+        self.resize_anim_pending = False
+
+    def _layout_position_for_path(self, path: str | None, x: int, y: int) -> tuple[int, int]:
+        if path and path in self.path_layout_transitions:
+            transition = self.path_layout_transitions[path]
+            t = max(0.0, min(1.0, transition["t"]))
+            x = int(round(transition["from_x"] + (transition["to_x"] - transition["from_x"]) * t))
+            y = int(round(transition["from_y"] + (transition["to_y"] - transition["from_y"]) * t))
+        elif abs(self.grid_shift_current) > 0.4:
+            x = int(round(x + self.grid_shift_current))
+        return x, y
 
     def _apply_scroll_position(self) -> None:
         total_height = self._total_scroll_height()
