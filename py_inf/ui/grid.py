@@ -15,8 +15,30 @@ PADDING = 8
 OVERSCAN_ROWS = 2
 BG_COLOR = "#2b2b2b"
 CARD_COLOR = "#333333"
+CARD_HOVER_COLOR = "#3d4c60"
+CARD_SELECTED_COLOR = "#3f618d"
 TEXT_COLOR = "#f1f1f1"
+TEXT_ACTIVE_COLOR = "#ffffff"
 PLACEHOLDER_COLOR = "#3c3c3c"
+PLACEHOLDER_HIGHLIGHT = "#54657b"
+OUTLINE_COLOR = "#78a8ff"
+
+
+def _hex_to_rgb(value: str) -> tuple[int, int, int]:
+    value = value.lstrip("#")
+    return tuple(int(value[index:index + 2], 16) for index in (0, 2, 4))
+
+
+def _rgb_to_hex(rgb: tuple[int, int, int]) -> str:
+    return "#" + "".join(f"{max(0, min(255, component)):02x}" for component in rgb)
+
+
+def _mix_color(start: str, end: str, amount: float) -> str:
+    amount = max(0.0, min(1.0, amount))
+    start_rgb = _hex_to_rgb(start)
+    end_rgb = _hex_to_rgb(end)
+    mixed = tuple(int(start_component + (end_component - start_component) * amount) for start_component, end_component in zip(start_rgb, end_rgb))
+    return _rgb_to_hex(mixed)
 
 
 class MediaGrid(ctk.CTkFrame):
@@ -40,6 +62,14 @@ class MediaGrid(ctk.CTkFrame):
         self.last_range: tuple[int, int] | None = None
         self.last_scroll_signature: tuple[float, int, int] | None = None
         self.load_requested_for_count = -1
+        self.selected_path: str | None = None
+        self.hover_path: str | None = None
+        self.hover_strengths: dict[str, float] = {}
+        self.selected_strengths: dict[str, float] = {}
+        self.reveal_strengths: dict[str, float] = {}
+        self.loading_phase = 0.0
+        self.scroll_target_y = 0.0
+        self.scroll_current_y = 0.0
 
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(0, weight=1)
@@ -47,7 +77,7 @@ class MediaGrid(ctk.CTkFrame):
         self.canvas = tk.Canvas(self, bg=BG_COLOR, highlightthickness=0, bd=0)
         self.canvas.grid(row=0, column=0, sticky="nsew")
 
-        self.scrollbar = ctk.CTkScrollbar(self, orientation="vertical", command=self.canvas.yview)
+        self.scrollbar = ctk.CTkScrollbar(self, orientation="vertical", command=self._on_scrollbar)
         self.scrollbar.grid(row=0, column=1, sticky="ns")
         self.canvas.configure(yscrollcommand=self.scrollbar.set)
 
@@ -58,6 +88,8 @@ class MediaGrid(ctk.CTkFrame):
         self.canvas.bind("<Button-1>", self._on_click)
         self.canvas.bind("<Double-Button-1>", self._on_double_click)
         self.canvas.bind("<Button-3>", self._on_right_click)
+        self.canvas.bind("<Motion>", self._on_motion)
+        self.canvas.bind("<Leave>", self._on_leave)
 
         self.after(16, self._ui_tick)
 
@@ -66,6 +98,8 @@ class MediaGrid(ctk.CTkFrame):
             self.items = list(items)
             self.last_range = None
             self.load_requested_for_count = -1
+            self.scroll_target_y = 0.0
+            self.scroll_current_y = 0.0
             self.canvas.yview_moveto(0)
         else:
             existing = {item["path"] for item in self.items}
@@ -75,15 +109,34 @@ class MediaGrid(ctk.CTkFrame):
         self._update_scroll_region()
         self._update_visible_tiles(force=True)
 
+    def set_selected_path(self, path: str | None) -> None:
+        self.selected_path = path
+        if path is not None:
+            self.selected_strengths.setdefault(path, 0.0)
+        self._refresh_visible_tile_visuals()
+
     def _ui_tick(self) -> None:
+        self.loading_phase = (self.loading_phase + 0.12) % (math.pi * 2)
+        scroll_changed = self._step_smooth_scroll()
         self._drain_pending_results()
+        animation_changed = self._step_animation_state()
         self._check_scroll_changes()
+        if scroll_changed or animation_changed:
+            self._refresh_visible_tile_visuals()
         if self.winfo_exists():
             self.after(16, self._ui_tick)
 
     def _on_canvas_configure(self, _event=None) -> None:
         self._recompute_columns()
         self._update_scroll_region()
+        self._update_visible_tiles(force=True)
+
+    def _on_scrollbar(self, first, second=None) -> None:
+        if second is None:
+            self.canvas.yview(first)
+        else:
+            self.canvas.yview_moveto(first)
+        self._sync_scroll_targets()
         self._update_visible_tiles(force=True)
 
     def _on_mousewheel(self, event) -> str:
@@ -97,9 +150,16 @@ class MediaGrid(ctk.CTkFrame):
             delta = max(1, int(abs(event.delta) / 40))
         else:
             delta = 0
-        self.canvas.yview_scroll(delta, "units")
-        self._update_visible_tiles(force=True)
+        self._scroll_by_units(delta)
         return "break"
+
+    def _scroll_by_units(self, delta_units: int) -> None:
+        total_height = self._total_scroll_height()
+        step = max(24, self.row_height // 3)
+        self.scroll_target_y = max(0.0, min(total_height, self.scroll_target_y + delta_units * step))
+        if abs(self.scroll_target_y - self.scroll_current_y) < 1:
+            self.scroll_current_y = self.scroll_target_y
+        self._update_visible_tiles(force=True)
 
     def _tile_path_at_current_item(self) -> str | None:
         current = self.canvas.find_withtag("current")
@@ -110,6 +170,35 @@ class MediaGrid(ctk.CTkFrame):
             if item_id in tile["canvas_ids"]:
                 return tile.get("bound_path")
         return None
+
+    def _tile_at_event(self, event) -> dict | None:
+        current = self.canvas.find_withtag("current")
+        if current:
+            item_id = current[0]
+            for tile in self.tiles:
+                if item_id in tile["canvas_ids"]:
+                    return tile
+        x = self.canvas.canvasx(event.x)
+        y = self.canvas.canvasy(event.y)
+        overlapping = self.canvas.find_overlapping(x, y, x, y)
+        if not overlapping:
+            return None
+        hit_ids = set(overlapping)
+        for tile in self.tiles:
+            if hit_ids.intersection(tile["canvas_ids"]):
+                return tile
+        return None
+
+    def _on_motion(self, event) -> None:
+        tile = self._tile_at_event(event)
+        path = tile.get("bound_path") if tile else None
+        if path != self.hover_path:
+            self.hover_path = path
+            if path is not None:
+                self.hover_strengths.setdefault(path, 0.0)
+
+    def _on_leave(self, _event) -> None:
+        self.hover_path = None
 
     def _on_click(self, event) -> None:
         path = self._tile_path_at_current_item()
@@ -151,6 +240,8 @@ class MediaGrid(ctk.CTkFrame):
         total_height = PADDING * 2 + rows * self.row_height
         total_width = max(self.canvas.winfo_width(), PADDING * 2 + self.columns * (TILE_WIDTH + H_GAP))
         self.canvas.configure(scrollregion=(0, 0, total_width, total_height))
+        self.scroll_target_y = min(self.scroll_target_y, self._total_scroll_height())
+        self.scroll_current_y = min(self.scroll_current_y, self._total_scroll_height())
 
     def _ensure_tile_pool(self) -> None:
         viewport_height = max(self.canvas.winfo_height(), self.row_height)
@@ -170,6 +261,8 @@ class MediaGrid(ctk.CTkFrame):
                 "image_id": image_id,
                 "text_id": text_id,
                 "bound_path": None,
+                "base_x": 0,
+                "base_y": 0,
             }
             self.tiles.append(tile)
 
@@ -210,8 +303,10 @@ class MediaGrid(ctk.CTkFrame):
             col = item_index % self.columns
             x = start_x + col * (TILE_WIDTH + H_GAP)
             y = PADDING + row * self.row_height
-            self._position_tile(tile, x, y)
+            tile["base_x"] = x
+            tile["base_y"] = y
             self._assign_tile(tile, item)
+            self._position_tile(tile, x, y)
 
         for tile in self.tiles[len(visible_items):]:
             for canvas_id in tile["canvas_ids"]:
@@ -221,17 +316,46 @@ class MediaGrid(ctk.CTkFrame):
         self._maybe_load_more(top_y, viewport_height, total_height)
 
     def _position_tile(self, tile: dict, x: int, y: int) -> None:
-        self.canvas.coords(tile["rect_id"], x, y, x + TILE_WIDTH, y + TILE_HEIGHT)
-        self.canvas.coords(tile["image_bg_id"], x + 10, y + 10, x + 10 + THUMB_SIZE, y + 10 + THUMB_SIZE)
-        self.canvas.coords(tile["image_id"], x + 10, y + 10)
-        self.canvas.coords(tile["text_id"], x + 10, y + 218)
+        path = tile.get("bound_path")
+        hover_strength = self.hover_strengths.get(path, 0.0) if path else 0.0
+        selected_strength = self.selected_strengths.get(path, 0.0) if path else 0.0
+        reveal_strength = self.reveal_strengths.get(path, 0.0) if path else 0.0
+        loading_strength = 1.0 if path in self.pending_paths else 0.0
+
+        lift = int(round(hover_strength * 6 + selected_strength * 10 + reveal_strength * 4))
+        image_inset = 10 - int(round(reveal_strength * 3))
+        image_size = THUMB_SIZE + int(round(reveal_strength * 6))
+        top = y - lift
+
+        card_fill = _mix_color(CARD_COLOR, CARD_HOVER_COLOR, min(1.0, hover_strength * 0.85 + reveal_strength * 0.25))
+        card_fill = _mix_color(card_fill, CARD_SELECTED_COLOR, min(1.0, selected_strength * 0.95 + reveal_strength * 0.2))
+
+        pulse = (math.sin(self.loading_phase) + 1.0) / 2.0
+        placeholder_fill = _mix_color(PLACEHOLDER_COLOR, PLACEHOLDER_HIGHLIGHT, loading_strength * (0.35 + pulse * 0.45))
+        placeholder_fill = _mix_color(placeholder_fill, CARD_SELECTED_COLOR, selected_strength * 0.25)
+
+        outline_strength = min(1.0, selected_strength + hover_strength * 0.65 + reveal_strength * 0.4)
+        outline_color = _mix_color(CARD_COLOR, OUTLINE_COLOR, outline_strength)
+        outline_width = 1 + int(round(outline_strength * 2)) if outline_strength > 0.08 else 0
+
+        self.canvas.coords(tile["rect_id"], x, top, x + TILE_WIDTH, top + TILE_HEIGHT)
+        self.canvas.coords(tile["image_bg_id"], x + image_inset, top + image_inset, x + image_inset + image_size, top + image_inset + image_size)
+        self.canvas.coords(tile["image_id"], x + image_inset, top + image_inset)
+        self.canvas.coords(tile["text_id"], x + 10, top + 218)
+
+        self.canvas.itemconfigure(tile["rect_id"], fill=card_fill, outline=outline_color if outline_width else "", width=outline_width)
+        self.canvas.itemconfigure(tile["image_bg_id"], fill=placeholder_fill)
+        self.canvas.itemconfigure(tile["text_id"], fill=_mix_color(TEXT_COLOR, TEXT_ACTIVE_COLOR, min(1.0, selected_strength * 0.7 + hover_strength * 0.35 + reveal_strength * 0.4)))
         for canvas_id in tile["canvas_ids"]:
             self.canvas.itemconfigure(canvas_id, state="normal")
 
     def _assign_tile(self, tile: dict, item: dict) -> None:
         path = item["path"]
+        previous_path = tile.get("bound_path")
         tile["bound_path"] = path
         self.canvas.itemconfigure(tile["text_id"], text=item.get("filename", ""))
+        if previous_path != path and previous_path == self.hover_path:
+            self.hover_path = None
         cache_key = f"grid:{path}"
         image = self.image_cache.get(cache_key)
         if image is not None:
@@ -262,6 +386,7 @@ class MediaGrid(ctk.CTkFrame):
             return
         image = tk.PhotoImage(master=self.canvas, data=self._pil_to_png_data(pil_image))
         self.image_cache.set(cache_key, image)
+        self.reveal_strengths[path] = 1.0
         if tile_id < len(self.tiles):
             tile = self.tiles[tile_id]
             if tile.get("bound_path") == path:
@@ -286,3 +411,82 @@ class MediaGrid(ctk.CTkFrame):
         if bottom_y >= total_height - threshold and self.load_requested_for_count != len(self.items):
             self.load_requested_for_count = len(self.items)
             self.on_load_more()
+
+    def _step_animation_state(self) -> bool:
+        changed = False
+        changed |= self._step_strengths(self.hover_strengths, self.hover_path, 0.32, floor=0.0)
+        changed |= self._step_strengths(self.selected_strengths, self.selected_path, 0.24, floor=0.0)
+        changed |= self._step_reveals()
+        return changed or bool(self.pending_paths)
+
+    def _step_strengths(self, strengths: dict[str, float], active_path: str | None, speed: float, floor: float) -> bool:
+        changed = False
+        paths = set(strengths)
+        if active_path:
+            paths.add(active_path)
+        for path in list(paths):
+            current = strengths.get(path, 0.0)
+            target = 1.0 if path == active_path else floor
+            updated = current + (target - current) * speed
+            if abs(updated - target) < 0.03:
+                updated = target
+            if abs(updated - current) > 0.004:
+                changed = True
+            if updated <= 0.001 and target == 0.0:
+                strengths.pop(path, None)
+            else:
+                strengths[path] = updated
+        return changed
+
+    def _step_reveals(self) -> bool:
+        changed = False
+        for path in list(self.reveal_strengths):
+            updated = self.reveal_strengths[path] * 0.78
+            if updated < 0.04:
+                self.reveal_strengths.pop(path, None)
+            else:
+                self.reveal_strengths[path] = updated
+            changed = True
+        return changed
+
+    def _refresh_visible_tile_visuals(self) -> None:
+        for tile in self.tiles:
+            if tile.get("bound_path"):
+                self._position_tile(tile, tile.get("base_x", 0), tile.get("base_y", 0))
+
+    def _step_smooth_scroll(self) -> bool:
+        total_height = self._total_scroll_height()
+        self.scroll_target_y = max(0.0, min(total_height, self.scroll_target_y))
+        self.scroll_current_y = max(0.0, min(total_height, self.scroll_current_y))
+        diff = self.scroll_target_y - self.scroll_current_y
+        if abs(diff) < 0.6:
+            if abs(diff) > 0:
+                self.scroll_current_y = self.scroll_target_y
+                self._apply_scroll_position()
+                return True
+            return False
+        self.scroll_current_y += diff * 0.32
+        self._apply_scroll_position()
+        return True
+
+    def _apply_scroll_position(self) -> None:
+        total_height = self._total_scroll_height()
+        if total_height <= 0:
+            self.canvas.yview_moveto(0)
+            return
+        self.canvas.yview_moveto(self.scroll_current_y / total_height)
+
+    def _sync_scroll_targets(self) -> None:
+        total_height = self._total_scroll_height()
+        current_top = self.canvas.yview()[0] * total_height if total_height > 0 else 0.0
+        self.scroll_target_y = current_top
+        self.scroll_current_y = current_top
+
+    def _total_scroll_height(self) -> float:
+        scroll_region = self.canvas.cget("scrollregion")
+        try:
+            _x0, _y0, _x1, total_height = map(float, scroll_region.split())
+        except Exception:
+            total_height = PADDING * 2 + self.row_height
+        viewport_height = max(self.canvas.winfo_height(), 1)
+        return max(0.0, total_height - viewport_height)

@@ -23,6 +23,30 @@ from py_inf.ui.grid import MediaGrid
 from py_inf.ui.sidebar import Sidebar
 from py_inf.ui.toolbar import Toolbar
 
+STATUS_BASE_COLOR = "#202020"
+STATUS_FLASH_COLOR = "#40678d"
+ACTION_BAR_COLOR = "#252525"
+ACTION_BUTTON_COLOR = "#35506f"
+ACTION_BUTTON_HOVER = "#4e73a0"
+ACTION_BUTTON_PRESS = "#2f4764"
+
+
+def _hex_to_rgb(value: str) -> tuple[int, int, int]:
+    value = value.lstrip("#")
+    return tuple(int(value[index:index + 2], 16) for index in (0, 2, 4))
+
+
+def _rgb_to_hex(rgb: tuple[int, int, int]) -> str:
+    return "#" + "".join(f"{max(0, min(255, component)):02x}" for component in rgb)
+
+
+def _mix_color(start: str, end: str, amount: float) -> str:
+    amount = max(0.0, min(1.0, amount))
+    start_rgb = _hex_to_rgb(start)
+    end_rgb = _hex_to_rgb(end)
+    mixed = tuple(int(start_component + (end_component - start_component) * amount) for start_component, end_component in zip(start_rgb, end_rgb))
+    return _rgb_to_hex(mixed)
+
 
 class MainWindow(ctk.CTk):
     def __init__(self) -> None:
@@ -47,16 +71,17 @@ class MainWindow(ctk.CTk):
         self.current_folder: str | None = None
         self.current_offset = 0
         self.has_more = False
+        self.status_after_id = None
 
         self.grid_rowconfigure(1, weight=1)
         self.grid_columnconfigure(1, weight=1)
         self.grid_columnconfigure(2, weight=0)
 
         self.toolbar = Toolbar(self, self.add_folder, self.refresh_media, self.refresh_media)
-        self.toolbar.grid(row=0, column=0, columnspan=3, sticky="ew")
+        self.toolbar.grid(row=0, column=0, columnspan=3, sticky="ew", padx=8, pady=(8, 0))
 
         self.sidebar = Sidebar(self, self.refresh_media, self.change_folder, width=240)
-        self.sidebar.grid(row=1, column=0, sticky="nsew")
+        self.sidebar.grid(row=1, column=0, sticky="nsew", padx=(8, 0), pady=(8, 8))
 
         self.grid_view = MediaGrid(
             self,
@@ -74,10 +99,10 @@ class MainWindow(ctk.CTk):
         self.details.grid(row=1, column=2, sticky="nsew", padx=(0, 8), pady=(8, 8))
 
         self.status_var = ctk.StringVar(value="准备就绪")
-        self.status_bar = ctk.CTkLabel(self, textvariable=self.status_var, anchor="w")
+        self.status_bar = ctk.CTkLabel(self, textvariable=self.status_var, anchor="w", fg_color=STATUS_BASE_COLOR, corner_radius=10)
         self.status_bar.grid(row=2, column=0, columnspan=3, sticky="ew", padx=8, pady=(0, 8))
 
-        self.action_bar = ctk.CTkFrame(self)
+        self.action_bar = ctk.CTkFrame(self, fg_color=ACTION_BAR_COLOR, corner_radius=12)
         self.action_bar.grid(row=3, column=0, columnspan=3, sticky="ew", padx=8, pady=(0, 8))
         self.favorite_button = ctk.CTkButton(self.action_bar, text="收藏切换", command=self.toggle_favorite)
         self.favorite_button.pack(side="left", padx=6, pady=6)
@@ -90,6 +115,16 @@ class MainWindow(ctk.CTk):
         self.copy_prompt_button = ctk.CTkButton(self.action_bar, text="复制 Prompt", command=self.copy_prompt)
         self.copy_prompt_button.pack(side="left", padx=6, pady=6)
 
+        self._style_buttons(
+            self.toolbar.add_button,
+            self.toolbar.refresh_button,
+            self.favorite_button,
+            self.tag_button,
+            self.move_button,
+            self.reveal_button,
+            self.copy_prompt_button,
+        )
+
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self.refresh_sidebar()
         self.refresh_media()
@@ -99,7 +134,7 @@ class MainWindow(ctk.CTk):
         if not folder:
             return
         if self.settings_service.add_root(folder):
-            self.status_var.set(f"已添加目录: {folder}")
+            self.set_status(f"已添加目录: {folder}")
         if not self.current_folder:
             self.current_folder = folder
         self.refresh_sidebar()
@@ -122,7 +157,8 @@ class MainWindow(ctk.CTk):
             self.current_items = []
             self.has_more = False
             self.grid_view.render_items([], False)
-            self.status_var.set("请先添加并选择目录")
+            self.grid_view.set_selected_path(None)
+            self.set_status("请先添加并选择目录")
             return
         page_size = self.settings_service.settings.page_size
         filters = SearchFilters(
@@ -143,9 +179,11 @@ class MainWindow(ctk.CTk):
         else:
             self.current_items.extend(visible_items)
         self.grid_view.render_items(self.current_items, self.has_more, reset=reset)
-        self.status_var.set(f"当前目录已加载 {len(self.current_items)} 个项目（递归子目录）")
+        self.set_status(f"当前目录已加载 {len(self.current_items)} 个项目（递归子目录）")
         if self.selected_path:
             self.select_media(self.selected_path)
+        else:
+            self.grid_view.set_selected_path(None)
 
     def load_more(self) -> None:
         if not self.has_more:
@@ -155,6 +193,7 @@ class MainWindow(ctk.CTk):
 
     def select_media(self, path: str) -> None:
         self.selected_path = path
+        self.grid_view.set_selected_path(path)
         item = next((entry for entry in self.current_items if entry["path"] == path), None)
         if not item:
             return
@@ -225,6 +264,7 @@ class MainWindow(ctk.CTk):
             return
         self.tag_service.add_tags_by_path(detail["path"], tags)
         self.select_media(detail["path"])
+        self.set_status(f"已更新标签: {Path(detail['path']).name}")
 
     def move_selected(self) -> None:
         detail = self._selected_detail()
@@ -238,15 +278,18 @@ class MainWindow(ctk.CTk):
         self.selected_path = new_path
         self.refresh_sidebar()
         self.refresh_media(reset=True)
+        self.set_status(f"已移动: {Path(new_path).name}")
 
     def reveal_selected(self) -> None:
         detail = self._selected_detail()
         if not detail:
             return
         self.file_ops.reveal(detail["path"])
+        self.set_status(f"已定位: {Path(detail['path']).name}")
 
     def show_item_context(self, path: str, x_root: int, y_root: int) -> None:
         self.selected_path = path
+        self.grid_view.set_selected_path(path)
         menu = tk.Menu(self, tearoff=0)
         menu.add_command(label="删除", command=lambda p=path: self.delete_media(p))
         menu.add_command(label="使用默认应用打开", command=lambda p=path: self.open_media(p))
@@ -264,17 +307,18 @@ class MainWindow(ctk.CTk):
         self.file_ops.trash(path)
         if self.selected_path == path:
             self.selected_path = None
+            self.grid_view.set_selected_path(None)
             self.details.show_detail(None)
         self.refresh_media(reset=True)
-        self.status_var.set(f"已删除: {name}")
+        self.set_status(f"已删除: {name}")
 
     def open_media(self, path: str) -> None:
         self.file_ops.open_default(path)
-        self.status_var.set(f"已打开: {Path(path).name}")
+        self.set_status(f"已打开: {Path(path).name}")
 
     def reveal_media(self, path: str) -> None:
         self.file_ops.reveal(path)
-        self.status_var.set(f"已定位: {Path(path).name}")
+        self.set_status(f"已定位: {Path(path).name}")
 
     def copy_prompt(self) -> None:
         detail = self._selected_detail()
@@ -282,7 +326,32 @@ class MainWindow(ctk.CTk):
             return
         self.clipboard_clear()
         self.clipboard_append(detail.get("prompt") or "")
-        self.status_var.set("Prompt 已复制")
+        self.set_status("Prompt 已复制")
+
+    def set_status(self, text: str) -> None:
+        self.status_var.set(text)
+        self._animate_status_flash()
+
+    def _animate_status_flash(self, step: int = 0) -> None:
+        phases = [1.0, 0.8, 0.56, 0.32, 0.12, 0.0]
+        if self.status_after_id is not None:
+            self.after_cancel(self.status_after_id)
+            self.status_after_id = None
+        if step >= len(phases):
+            self.status_bar.configure(fg_color=STATUS_BASE_COLOR)
+            return
+        self.status_bar.configure(fg_color=_mix_color(STATUS_BASE_COLOR, STATUS_FLASH_COLOR, phases[step]))
+        self.status_after_id = self.after(55, lambda: self._animate_status_flash(step + 1))
+
+    def _style_buttons(self, *buttons) -> None:
+        for button in buttons:
+            button.configure(fg_color=ACTION_BUTTON_COLOR, hover_color=ACTION_BUTTON_HOVER)
+            button.bind("<ButtonPress-1>", lambda _event, btn=button: btn.configure(fg_color=ACTION_BUTTON_PRESS), add="+")
+            button.bind("<ButtonRelease-1>", lambda _event, btn=button: self._restore_button(btn), add="+")
+            button.bind("<Leave>", lambda _event, btn=button: self._restore_button(btn), add="+")
+
+    def _restore_button(self, button) -> None:
+        button.configure(fg_color=ACTION_BUTTON_COLOR)
 
     def on_close(self) -> None:
         self.jobs.shutdown()
