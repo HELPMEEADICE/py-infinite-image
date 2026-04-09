@@ -38,7 +38,7 @@ class DetailsPanel(ctk.CTkFrame):
         self.panel_flash_after_id = None
         self.last_width: int | None = None
         self.content_shift = 0.0
-        self.resize_pending = False
+        self.settle_after_id = None
 
         self.content = ctk.CTkFrame(self, fg_color="transparent")
         self.content.place(relx=0, rely=0, relwidth=1, relheight=1, x=0, y=0)
@@ -107,22 +107,23 @@ class DetailsPanel(ctk.CTkFrame):
         self.last_width = event.width
         if abs(delta) < 6:
             return
-        self.content_shift = max(-10.0, min(10.0, -delta * 0.12))
-        if not self.resize_pending:
-            self.resize_pending = True
-            self.resize_after_id = self.after(24, self._animate_resize_settle)
-        if abs(delta) >= 24:
+        self.content.place_configure(x=0)
+        self.content_shift = max(-8.0, min(8.0, -delta * 0.1))
+        if self.settle_after_id is not None:
+            self.after_cancel(self.settle_after_id)
+        self.settle_after_id = self.after(120, self._animate_resize_settle)
+        if abs(delta) >= 40:
             self._animate_panel_flash()
 
     def _animate_resize_settle(self) -> None:
-        self.resize_pending = False
+        self.settle_after_id = None
         if abs(self.content_shift) < 0.5:
             self.content_shift = 0.0
             self.content.place_configure(x=0)
             self.resize_after_id = None
             return
         self.content.place_configure(x=int(round(self.content_shift)))
-        self.content_shift *= 0.5
+        self.content_shift *= 0.45
         self.resize_after_id = self.after(32, self._animate_resize_settle)
 
     def _animate_panel_flash(self, step: int = 0) -> None:
