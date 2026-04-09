@@ -57,5 +57,5 @@ class SearchService:
                     "tags": state.get("tags", "") if state else "",
                 }
             )
-        items.sort(key=lambda item: item["path"].lower())
+        items.sort(key=lambda item: Path(item["path"]).stat().st_mtime, reverse=True)
         return items[filters.offset:filters.offset + filters.limit]
