@@ -66,6 +66,7 @@ class MainWindow(ctk.CTk):
             self.select_media,
             self.load_more,
             on_context=self.show_item_context,
+            on_open=self.open_media,
         )
         self.grid_view.grid(row=1, column=1, sticky="nsew", padx=(8, 8), pady=(8, 8))
 

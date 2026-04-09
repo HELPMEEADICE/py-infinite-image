@@ -20,7 +20,7 @@ PLACEHOLDER_COLOR = "#3c3c3c"
 
 
 class MediaGrid(ctk.CTkFrame):
-    def __init__(self, master, image_cache, thumb_service, job_service, on_select, on_load_more, on_context=None, **kwargs):
+    def __init__(self, master, image_cache, thumb_service, job_service, on_select, on_load_more, on_context=None, on_open=None, **kwargs):
         super().__init__(master, **kwargs)
         self.image_cache = image_cache
         self.thumb_service = thumb_service
@@ -28,6 +28,7 @@ class MediaGrid(ctk.CTkFrame):
         self.on_select = on_select
         self.on_load_more = on_load_more
         self.on_context = on_context
+        self.on_open = on_open
 
         self.items: list[dict] = []
         self.columns = 4
@@ -55,6 +56,7 @@ class MediaGrid(ctk.CTkFrame):
         self.canvas.bind("<Button-4>", self._on_mousewheel)
         self.canvas.bind("<Button-5>", self._on_mousewheel)
         self.canvas.bind("<Button-1>", self._on_click)
+        self.canvas.bind("<Double-Button-1>", self._on_double_click)
         self.canvas.bind("<Button-3>", self._on_right_click)
 
         self.after(16, self._ui_tick)
@@ -113,6 +115,14 @@ class MediaGrid(ctk.CTkFrame):
         path = self._tile_path_at_current_item()
         if path:
             self.on_select(path)
+
+    def _on_double_click(self, event) -> None:
+        path = self._tile_path_at_current_item()
+        if not path:
+            return
+        self.on_select(path)
+        if self.on_open:
+            self.on_open(path)
 
     def _on_right_click(self, event) -> None:
         path = self._tile_path_at_current_item()
