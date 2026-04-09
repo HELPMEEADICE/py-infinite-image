@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import tkinter as tk
 import tkinter.messagebox as messagebox
 
 import customtkinter as ctk
@@ -57,7 +58,15 @@ class MainWindow(ctk.CTk):
         self.sidebar = Sidebar(self, self.refresh_media, self.change_folder, width=240)
         self.sidebar.grid(row=1, column=0, sticky="nsew")
 
-        self.grid_view = MediaGrid(self, self.image_cache, self.thumb_service, self.jobs, self.select_media, self.load_more)
+        self.grid_view = MediaGrid(
+            self,
+            self.image_cache,
+            self.thumb_service,
+            self.jobs,
+            self.select_media,
+            self.load_more,
+            on_context=self.show_item_context,
+        )
         self.grid_view.grid(row=1, column=1, sticky="nsew", padx=(8, 8), pady=(8, 8))
 
         self.details = DetailsPanel(self, self.image_cache, self.thumb_service, width=320)
@@ -234,6 +243,37 @@ class MainWindow(ctk.CTk):
         if not detail:
             return
         self.file_ops.reveal(detail["path"])
+
+    def show_item_context(self, path: str, x_root: int, y_root: int) -> None:
+        self.selected_path = path
+        menu = tk.Menu(self, tearoff=0)
+        menu.add_command(label="删除", command=lambda p=path: self.delete_media(p))
+        menu.add_command(label="使用默认应用打开", command=lambda p=path: self.open_media(p))
+        menu.add_command(label="使用文件管理器打开", command=lambda p=path: self.reveal_media(p))
+        menu.add_command(label="查看 Meta Data", command=lambda p=path: self.select_media(p))
+        try:
+            menu.tk_popup(x_root, y_root)
+        finally:
+            menu.grab_release()
+
+    def delete_media(self, path: str) -> None:
+        name = Path(path).name
+        if not messagebox.askyesno("删除文件", f"确认将 {name} 移入回收站？"):
+            return
+        self.file_ops.trash(path)
+        if self.selected_path == path:
+            self.selected_path = None
+            self.details.show_detail(None)
+        self.refresh_media(reset=True)
+        self.status_var.set(f"已删除: {name}")
+
+    def open_media(self, path: str) -> None:
+        self.file_ops.open_default(path)
+        self.status_var.set(f"已打开: {Path(path).name}")
+
+    def reveal_media(self, path: str) -> None:
+        self.file_ops.reveal(path)
+        self.status_var.set(f"已定位: {Path(path).name}")
 
     def copy_prompt(self) -> None:
         detail = self._selected_detail()

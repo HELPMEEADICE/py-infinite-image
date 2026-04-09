@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -15,6 +16,9 @@ class FileOps:
         dst = dst_dir / src.name
         shutil.move(str(src), str(dst))
         return str(dst)
+
+    def open_default(self, source: str) -> None:
+        os.startfile(str(Path(source)))
 
     def reveal(self, source: str) -> None:
         subprocess.Popen(["explorer", "/select,", str(Path(source))])

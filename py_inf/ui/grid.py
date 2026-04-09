@@ -20,13 +20,14 @@ PLACEHOLDER_COLOR = "#3c3c3c"
 
 
 class MediaGrid(ctk.CTkFrame):
-    def __init__(self, master, image_cache, thumb_service, job_service, on_select, on_load_more, **kwargs):
+    def __init__(self, master, image_cache, thumb_service, job_service, on_select, on_load_more, on_context=None, **kwargs):
         super().__init__(master, **kwargs)
         self.image_cache = image_cache
         self.thumb_service = thumb_service
         self.job_service = job_service
         self.on_select = on_select
         self.on_load_more = on_load_more
+        self.on_context = on_context
 
         self.items: list[dict] = []
         self.columns = 4
@@ -54,6 +55,7 @@ class MediaGrid(ctk.CTkFrame):
         self.canvas.bind("<Button-4>", self._on_mousewheel)
         self.canvas.bind("<Button-5>", self._on_mousewheel)
         self.canvas.bind("<Button-1>", self._on_click)
+        self.canvas.bind("<Button-3>", self._on_right_click)
 
         self.after(16, self._ui_tick)
 
@@ -97,17 +99,28 @@ class MediaGrid(ctk.CTkFrame):
         self._update_visible_tiles(force=True)
         return "break"
 
-    def _on_click(self, event) -> None:
+    def _tile_path_at_current_item(self) -> str | None:
         current = self.canvas.find_withtag("current")
         if not current:
-            return
+            return None
         item_id = current[0]
         for tile in self.tiles:
             if item_id in tile["canvas_ids"]:
-                path = tile.get("bound_path")
-                if path:
-                    self.on_select(path)
-                return
+                return tile.get("bound_path")
+        return None
+
+    def _on_click(self, event) -> None:
+        path = self._tile_path_at_current_item()
+        if path:
+            self.on_select(path)
+
+    def _on_right_click(self, event) -> None:
+        path = self._tile_path_at_current_item()
+        if not path:
+            return
+        self.on_select(path)
+        if self.on_context:
+            self.on_context(path, event.x_root, event.y_root)
 
     def _check_scroll_changes(self) -> None:
         y0, _y1 = self.canvas.yview()
