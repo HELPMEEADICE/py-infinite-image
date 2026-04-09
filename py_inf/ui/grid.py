@@ -188,11 +188,15 @@ class MediaGrid(ctk.CTkFrame):
         self._update_scroll_region()
         self._update_visible_tiles(force=True)
 
-    def _on_scrollbar(self, first, second=None) -> None:
-        if second is None:
-            self.canvas.yview(first)
+    def _on_scrollbar(self, *args) -> None:
+        if not args:
+            return
+        if args[0] == "moveto" and len(args) >= 2:
+            self.canvas.yview_moveto(args[1])
+        elif args[0] == "scroll" and len(args) >= 3:
+            self.canvas.yview_scroll(int(args[1]), args[2])
         else:
-            self.canvas.yview_moveto(first)
+            self.canvas.yview(*args)
         self._sync_scroll_targets()
         self._update_visible_tiles(force=True)
 

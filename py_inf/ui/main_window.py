@@ -29,6 +29,14 @@ ACTION_BAR_COLOR = "#252525"
 ACTION_BUTTON_COLOR = "#35506f"
 ACTION_BUTTON_HOVER = "#4e73a0"
 ACTION_BUTTON_PRESS = "#2f4764"
+INPUT_BORDER_COLOR = "#406386"
+INPUT_BORDER_FOCUS = "#79acdf"
+INPUT_BORDER_FLASH = "#94c2ef"
+OPTION_BUTTON_BASE = "#3f628b"
+OPTION_BUTTON_HOVER = "#567ca8"
+OPTION_BUTTON_FLASH = "#7ba8de"
+CHECKBOX_HOVER = "#3f628b"
+CHECKBOX_FLASH = "#6e9ad1"
 
 
 def _hex_to_rgb(value: str) -> tuple[int, int, int]:
@@ -124,6 +132,10 @@ class MainWindow(ctk.CTk):
             self.reveal_button,
             self.copy_prompt_button,
         )
+        self._style_entry(self.toolbar.search_entry)
+        self._style_option_menu(self.sidebar.kind_menu)
+        self._style_option_menu(self.sidebar.folder_menu)
+        self._style_checkbox(self.sidebar.favorite_check)
 
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self.refresh_sidebar()
@@ -142,6 +154,7 @@ class MainWindow(ctk.CTk):
 
     def change_folder(self) -> None:
         self.current_folder = self.sidebar.folder_var.get() or None
+        self._flash_option_menu(self.sidebar.folder_menu)
         self.refresh_media(reset=True)
 
     def refresh_sidebar(self) -> None:
@@ -346,12 +359,94 @@ class MainWindow(ctk.CTk):
     def _style_buttons(self, *buttons) -> None:
         for button in buttons:
             button.configure(fg_color=ACTION_BUTTON_COLOR, hover_color=ACTION_BUTTON_HOVER)
-            button.bind("<ButtonPress-1>", lambda _event, btn=button: btn.configure(fg_color=ACTION_BUTTON_PRESS), add="+")
+            self._set_animation_state(button, "fg_color", ACTION_BUTTON_COLOR)
+            button.bind("<Enter>", lambda _event, btn=button: self._animate_button_state(btn, ACTION_BUTTON_HOVER), add="+")
+            button.bind("<Leave>", lambda _event, btn=button: self._animate_button_state(btn, ACTION_BUTTON_COLOR), add="+")
+            button.bind("<ButtonPress-1>", lambda _event, btn=button: self._animate_button_state(btn, ACTION_BUTTON_PRESS), add="+")
             button.bind("<ButtonRelease-1>", lambda _event, btn=button: self._restore_button(btn), add="+")
-            button.bind("<Leave>", lambda _event, btn=button: self._restore_button(btn), add="+")
+
+    def _style_entry(self, entry) -> None:
+        self._set_animation_state(entry, "border_color", INPUT_BORDER_COLOR)
+        entry.bind("<FocusIn>", lambda _event, widget=entry: self._animate_widget_color(widget, "border_color", INPUT_BORDER_FOCUS), add="+")
+        entry.bind("<FocusOut>", lambda _event, widget=entry: self._animate_widget_color(widget, "border_color", INPUT_BORDER_COLOR), add="+")
+        entry.bind("<Return>", lambda _event, widget=entry: self._flash_entry(widget, INPUT_BORDER_FOCUS, INPUT_BORDER_FLASH), add="+")
+
+    def _style_option_menu(self, option_menu) -> None:
+        self._set_animation_state(option_menu, "button_color", OPTION_BUTTON_BASE)
+        option_menu.bind("<Enter>", lambda _event, widget=option_menu: self._animate_widget_color(widget, "button_color", OPTION_BUTTON_HOVER), add="+")
+        option_menu.bind("<Leave>", lambda _event, widget=option_menu: self._animate_widget_color(widget, "button_color", OPTION_BUTTON_BASE), add="+")
+
+    def _style_checkbox(self, checkbox) -> None:
+        checkbox.configure(fg_color=CHECKBOX_HOVER, hover_color=CHECKBOX_FLASH)
+        self._set_animation_state(checkbox, "fg_color", CHECKBOX_HOVER)
+        checkbox.bind("<Enter>", lambda _event, widget=checkbox: self._animate_widget_color(widget, "fg_color", CHECKBOX_FLASH), add="+")
+        checkbox.bind("<Leave>", lambda _event, widget=checkbox: self._animate_widget_color(widget, "fg_color", CHECKBOX_HOVER), add="+")
+
+    def _animate_button_state(self, button, target_color: str) -> None:
+        self._animate_widget_color(button, "fg_color", target_color)
 
     def _restore_button(self, button) -> None:
-        button.configure(fg_color=ACTION_BUTTON_COLOR)
+        pointer_inside = button.winfo_containing(button.winfo_pointerx(), button.winfo_pointery()) == button
+        target = ACTION_BUTTON_HOVER if pointer_inside else ACTION_BUTTON_COLOR
+        self._animate_button_state(button, target)
+
+    def _flash_entry(self, entry, settle_color: str, flash_color: str) -> None:
+        active_settle = INPUT_BORDER_FOCUS if entry.focus_displayof() == entry else settle_color
+        self._animate_widget_color(entry, "border_color", flash_color, duration_ms=90, steps=5, followup_color=active_settle)
+
+    def _flash_option_menu(self, option_menu) -> None:
+        self._animate_widget_color(option_menu, "button_color", OPTION_BUTTON_FLASH, duration_ms=90, steps=5, followup_color=OPTION_BUTTON_BASE)
+
+    def _flash_checkbox(self, checkbox) -> None:
+        self._animate_widget_color(checkbox, "fg_color", CHECKBOX_FLASH, duration_ms=85, steps=4, followup_color=CHECKBOX_HOVER)
+
+    def _animate_widget_color(self, widget, option: str, target_color: str, duration_ms: int = 140, steps: int = 8, followup_color: str | None = None) -> None:
+        current_color = self._get_animation_state(widget, option)
+        self._cancel_widget_animation(widget, option)
+        self._run_color_animation(widget, option, current_color, target_color, duration_ms, steps, followup_color)
+
+    def _run_color_animation(self, widget, option: str, start_color: str, target_color: str, duration_ms: int, steps: int, followup_color: str | None, step: int = 0) -> None:
+        if not widget.winfo_exists():
+            return
+        if step > steps:
+            self._apply_widget_color(widget, option, target_color)
+            if followup_color is not None and followup_color != target_color:
+                self._run_color_animation(widget, option, target_color, followup_color, duration_ms, steps)
+            return
+        ratio = step / max(steps, 1)
+        color = _mix_color(start_color, target_color, ratio)
+        self._apply_widget_color(widget, option, color)
+        delay = max(10, duration_ms // max(steps, 1))
+        after_id = widget.after(delay, lambda: self._run_color_animation(widget, option, start_color, target_color, duration_ms, steps, followup_color, step + 1))
+        self._store_widget_animation(widget, option, after_id)
+
+    def _apply_widget_color(self, widget, option: str, color: str) -> None:
+        widget.configure(**{option: color})
+        self._set_animation_state(widget, option, color)
+
+    def _cancel_widget_animation(self, widget, option: str) -> None:
+        animations = getattr(widget, "_anim_after_ids", {})
+        after_id = animations.pop(option, None)
+        if after_id is not None:
+            try:
+                widget.after_cancel(after_id)
+            except Exception:
+                pass
+        widget._anim_after_ids = animations
+
+    def _store_widget_animation(self, widget, option: str, after_id: str) -> None:
+        animations = getattr(widget, "_anim_after_ids", {})
+        animations[option] = after_id
+        widget._anim_after_ids = animations
+
+    def _set_animation_state(self, widget, option: str, value: str) -> None:
+        state = getattr(widget, "_anim_state", {})
+        state[option] = value
+        widget._anim_state = state
+
+    def _get_animation_state(self, widget, option: str) -> str:
+        state = getattr(widget, "_anim_state", {})
+        return state.get(option, widget.cget(option))
 
     def on_close(self) -> None:
         self.jobs.shutdown()
