@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import customtkinter as ctk
 
-PANEL_BG = "#1d1d1d"
-PANEL_FLASH = "#314763"
-PREVIEW_BG = "#242424"
-PREVIEW_FLASH = "#3e5f88"
-TEXTBOX_BG = "#1f1f1f"
-TEXTBOX_FLASH = "#324865"
+PANEL_BG = "#1d1b20"
+PANEL_FLASH = "#36343b"
+PREVIEW_BG = "#2b2930"
+PREVIEW_FLASH = "#4f378b"
+TEXTBOX_BG = "#141218"
+TEXTBOX_FLASH = "#4f378b"
 
 
 def _hex_to_rgb(value: str) -> tuple[int, int, int]:
@@ -29,7 +29,7 @@ def _mix_color(start: str, end: str, amount: float) -> str:
 
 class DetailsPanel(ctk.CTkFrame):
     def __init__(self, master, image_cache, thumb_service, **kwargs):
-        super().__init__(master, fg_color=PANEL_BG, **kwargs)
+        super().__init__(master, fg_color=PANEL_BG, corner_radius=24, **kwargs)
         self.image_cache = image_cache
         self.thumb_service = thumb_service
         self.preview_after_id = None
@@ -43,9 +43,9 @@ class DetailsPanel(ctk.CTkFrame):
         self.content = ctk.CTkFrame(self, fg_color="transparent")
         self.content.place(relx=0, rely=0, relwidth=1, relheight=1, x=0, y=0)
         self.content.grid_rowconfigure(1, weight=1)
-        self.preview_label = ctk.CTkLabel(self.content, text="未选择项目", fg_color=PREVIEW_BG, corner_radius=12)
+        self.preview_label = ctk.CTkLabel(self.content, text="未选择项目", fg_color=PREVIEW_BG, corner_radius=16)
         self.preview_label.grid(row=0, column=0, padx=10, pady=10, sticky="ew")
-        self.text = ctk.CTkTextbox(self.content, width=280, fg_color=TEXTBOX_BG)
+        self.text = ctk.CTkTextbox(self.content, width=280, fg_color=TEXTBOX_BG, corner_radius=12)
         self.text.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
         self.text.configure(state="disabled")
 

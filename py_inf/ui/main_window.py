@@ -23,20 +23,20 @@ from py_inf.ui.grid import MediaGrid
 from py_inf.ui.sidebar import Sidebar
 from py_inf.ui.toolbar import Toolbar
 
-STATUS_BASE_COLOR = "#202020"
-STATUS_FLASH_COLOR = "#40678d"
-ACTION_BAR_COLOR = "#252525"
-ACTION_BUTTON_COLOR = "#35506f"
-ACTION_BUTTON_HOVER = "#4e73a0"
-ACTION_BUTTON_PRESS = "#2f4764"
-INPUT_BORDER_COLOR = "#406386"
-INPUT_BORDER_FOCUS = "#79acdf"
-INPUT_BORDER_FLASH = "#94c2ef"
-OPTION_BUTTON_BASE = "#3f628b"
-OPTION_BUTTON_HOVER = "#567ca8"
-OPTION_BUTTON_FLASH = "#7ba8de"
-CHECKBOX_HOVER = "#3f628b"
-CHECKBOX_FLASH = "#6e9ad1"
+STATUS_BASE_COLOR = "#36343b"
+STATUS_FLASH_COLOR = "#4f378b"
+ACTION_BAR_COLOR = "#1d1b20"
+ACTION_BUTTON_COLOR = "#4a4458"
+ACTION_BUTTON_HOVER = "#5d576b"
+ACTION_BUTTON_PRESS = "#d0bcff"
+INPUT_BORDER_COLOR = "#938f99"
+INPUT_BORDER_FOCUS = "#d0bcff"
+INPUT_BORDER_FLASH = "#eaddff"
+OPTION_BUTTON_BASE = "#4a4458"
+OPTION_BUTTON_HOVER = "#5d576b"
+OPTION_BUTTON_FLASH = "#d0bcff"
+CHECKBOX_HOVER = "#4a4458"
+CHECKBOX_FLASH = "#d0bcff"
 
 
 def _hex_to_rgb(value: str) -> tuple[int, int, int]:
@@ -107,20 +107,20 @@ class MainWindow(ctk.CTk):
         self.details.grid(row=1, column=2, sticky="nsew", padx=(0, 8), pady=(8, 8))
 
         self.status_var = ctk.StringVar(value="准备就绪")
-        self.status_bar = ctk.CTkLabel(self, textvariable=self.status_var, anchor="w", fg_color=STATUS_BASE_COLOR, corner_radius=10)
+        self.status_bar = ctk.CTkLabel(self, textvariable=self.status_var, anchor="w", fg_color=STATUS_BASE_COLOR, corner_radius=16)
         self.status_bar.grid(row=2, column=0, columnspan=3, sticky="ew", padx=8, pady=(0, 8))
 
-        self.action_bar = ctk.CTkFrame(self, fg_color=ACTION_BAR_COLOR, corner_radius=12)
+        self.action_bar = ctk.CTkFrame(self, fg_color=ACTION_BAR_COLOR, corner_radius=24)
         self.action_bar.grid(row=3, column=0, columnspan=3, sticky="ew", padx=8, pady=(0, 8))
-        self.favorite_button = ctk.CTkButton(self.action_bar, text="收藏切换", command=self.toggle_favorite)
+        self.favorite_button = ctk.CTkButton(self.action_bar, text="收藏切换", command=self.toggle_favorite, corner_radius=20)
         self.favorite_button.pack(side="left", padx=6, pady=6)
-        self.tag_button = ctk.CTkButton(self.action_bar, text="添加标签", command=self.add_tags)
+        self.tag_button = ctk.CTkButton(self.action_bar, text="添加标签", command=self.add_tags, corner_radius=20)
         self.tag_button.pack(side="left", padx=6, pady=6)
-        self.move_button = ctk.CTkButton(self.action_bar, text="移动文件", command=self.move_selected)
+        self.move_button = ctk.CTkButton(self.action_bar, text="移动文件", command=self.move_selected, corner_radius=20)
         self.move_button.pack(side="left", padx=6, pady=6)
-        self.reveal_button = ctk.CTkButton(self.action_bar, text="打开所在目录", command=self.reveal_selected)
+        self.reveal_button = ctk.CTkButton(self.action_bar, text="打开所在目录", command=self.reveal_selected, corner_radius=20)
         self.reveal_button.pack(side="left", padx=6, pady=6)
-        self.copy_prompt_button = ctk.CTkButton(self.action_bar, text="复制 Prompt", command=self.copy_prompt)
+        self.copy_prompt_button = ctk.CTkButton(self.action_bar, text="复制 Prompt", command=self.copy_prompt, corner_radius=20)
         self.copy_prompt_button.pack(side="left", padx=6, pady=6)
 
         self._style_buttons(

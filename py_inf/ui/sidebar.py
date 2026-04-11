@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import customtkinter as ctk
 
-SIDEBAR_BG = "#252525"
-ACCENT = "#3f628b"
+SIDEBAR_BG = "#1d1b20"
+ACCENT = "#4a4458"
 
 
 class Sidebar(ctk.CTkFrame):
     def __init__(self, master, on_filter_change, on_folder_change, **kwargs):
-        super().__init__(master, fg_color=SIDEBAR_BG, corner_radius=12, **kwargs)
+        super().__init__(master, fg_color=SIDEBAR_BG, corner_radius=24, **kwargs)
         self.on_filter_change = on_filter_change
         self.on_folder_change = on_folder_change
         self.resize_after_id = None
@@ -23,7 +23,7 @@ class Sidebar(ctk.CTkFrame):
 
         self.kind_var = ctk.StringVar(value="all")
         ctk.CTkLabel(self.content, text="类型").grid(row=0, column=0, sticky="w", padx=10, pady=(10, 4))
-        self.kind_menu = ctk.CTkOptionMenu(self.content, values=["all", "image", "video"], variable=self.kind_var, command=self._on_kind_change, button_color=ACCENT, button_hover_color="#567ca8")
+        self.kind_menu = ctk.CTkOptionMenu(self.content, values=["all", "image", "video"], variable=self.kind_var, command=self._on_kind_change, button_color=ACCENT, button_hover_color="#5d576b", corner_radius=16)
         self.kind_menu.grid(row=1, column=0, sticky="ew", padx=10)
 
         self.favorite_var = ctk.BooleanVar(value=False)
@@ -32,7 +32,7 @@ class Sidebar(ctk.CTkFrame):
 
         ctk.CTkLabel(self.content, text="当前目录").grid(row=3, column=0, sticky="w", padx=10, pady=(8, 4))
         self.folder_var = ctk.StringVar(value="")
-        self.folder_menu = ctk.CTkOptionMenu(self.content, values=[""], variable=self.folder_var, command=self._on_folder_change, button_color=ACCENT, button_hover_color="#567ca8")
+        self.folder_menu = ctk.CTkOptionMenu(self.content, values=[""], variable=self.folder_var, command=self._on_folder_change, button_color=ACCENT, button_hover_color="#5d576b", corner_radius=16)
         self.folder_menu.grid(row=4, column=0, sticky="ew", padx=10, pady=(0, 10))
 
         self.bind("<Configure>", self._on_resize)
