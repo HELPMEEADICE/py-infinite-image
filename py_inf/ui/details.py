@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import customtkinter as ctk
 
+from py_inf.services.cache import build_image_cache_key
+
 PANEL_BG = "#1d1b20"
 PANEL_FLASH = "#36343b"
 PREVIEW_BG = "#2b2930"
@@ -28,14 +30,18 @@ def _mix_color(start: str, end: str, amount: float) -> str:
 
 
 class DetailsPanel(ctk.CTkFrame):
-    def __init__(self, master, image_cache, thumb_service, **kwargs):
+    def __init__(self, master, image_cache, thumb_service, job_service, preview_size: int = 280, **kwargs):
         super().__init__(master, fg_color=PANEL_BG, corner_radius=24, **kwargs)
         self.image_cache = image_cache
         self.thumb_service = thumb_service
+        self.job_service = job_service
+        self.preview_size = max(120, int(preview_size))
         self.preview_after_id = None
         self.text_after_id = None
         self.resize_after_id = None
         self.panel_flash_after_id = None
+        self.preview_request_id = 0
+        self.current_preview_key: str | None = None
         self.last_width: int | None = None
         self.content_shift = 0.0
         self.settle_after_id = None
@@ -57,22 +63,22 @@ class DetailsPanel(ctk.CTkFrame):
         self.text.configure(state="normal")
         self.text.delete("1.0", "end")
         if not item:
+            self.preview_request_id += 1
+            self.current_preview_key = None
             self.preview_label.configure(text="未选择项目", image=None, fg_color=PREVIEW_BG)
             self.text.configure(fg_color=TEXTBOX_BG)
             self.text.insert("1.0", "")
             self.text.configure(state="disabled")
             return
-        cache_key = f"detail:{item['path']}"
+        preview_size = self._preview_target_size()
+        cache_key = build_image_cache_key(item["path"], size=preview_size, variant="detail")
+        self.current_preview_key = cache_key
         image = self.image_cache.get(cache_key)
-        if image is None:
-            pil_image = self.thumb_service.load_image(item["path"], (280, 280), fit="preview")
-            if pil_image is not None:
-                image = ctk.CTkImage(light_image=pil_image, dark_image=pil_image, size=pil_image.size)
-                self.image_cache.set(cache_key, image)
         if image is not None:
             self.preview_label.configure(text="", image=image)
         else:
-            self.preview_label.configure(text="无预览", image=None)
+            self.preview_label.configure(text="加载中...", image=None)
+            self._request_preview(item["path"], cache_key)
         tags = item.get("tags") or ""
         lines = [
             f"路径: {item.get('path', '')}",
@@ -96,6 +102,32 @@ class DetailsPanel(ctk.CTkFrame):
         self.text.configure(state="disabled")
         self._animate_preview_flash()
         self._animate_text_flash()
+
+    def _request_preview(self, path: str, cache_key: str) -> None:
+        self.preview_request_id += 1
+        request_id = self.preview_request_id
+        target_size = self._preview_target_size()
+        future = self.job_service.submit(self.thumb_service.load_image, path, target_size, fit="preview")
+        future.add_done_callback(lambda f, rid=request_id, key=cache_key: self.after(0, lambda: self._apply_preview_result(rid, key, f)) if self.winfo_exists() else None)
+
+    def _preview_target_size(self) -> tuple[int, int]:
+        width = max(120, min(self.preview_size, self.winfo_width() - 40 if self.winfo_width() > 40 else self.preview_size))
+        return (width, width)
+
+    def _apply_preview_result(self, request_id: int, cache_key: str, future) -> None:
+        if not self.winfo_exists() or request_id != self.preview_request_id or cache_key != self.current_preview_key:
+            return
+        try:
+            pil_image = future.result()
+        except Exception:
+            pil_image = None
+        if pil_image is None:
+            self.preview_label.configure(text="无预览", image=None)
+            return
+        image = ctk.CTkImage(light_image=pil_image, dark_image=pil_image, size=pil_image.size)
+        self.image_cache.set(cache_key, image)
+        if request_id == self.preview_request_id and cache_key == self.current_preview_key:
+            self.preview_label.configure(text="", image=image)
 
     def _on_resize(self, event) -> None:
         if event.widget is not self:

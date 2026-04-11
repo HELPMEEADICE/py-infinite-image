@@ -7,8 +7,17 @@ from pathlib import Path
 from py_inf.services.settings import THUMB_DIR
 
 
+def build_image_cache_key(path: str, *, size: tuple[int, int], variant: str, mtime_ns: int | None = None) -> str:
+    if mtime_ns is None:
+        try:
+            mtime_ns = Path(path).stat().st_mtime_ns
+        except OSError:
+            mtime_ns = 0
+    return f"{variant}:{size[0]}x{size[1]}:{mtime_ns}:{path}"
+
+
 class ImageCache:
-    def __init__(self, limit: int = 256) -> None:
+    def __init__(self, limit: int = 1024) -> None:
         self.limit = limit
         self._items: OrderedDict[str, object] = OrderedDict()
 

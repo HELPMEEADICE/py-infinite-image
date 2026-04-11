@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from queue import Empty, Queue
 import tkinter as tk
 import tkinter.messagebox as messagebox
 
@@ -73,7 +74,12 @@ class MainWindow(ctk.CTk):
         self.thumb_service = ThumbnailService()
         self.jobs = JobService()
         self.file_ops = FileOps()
-        self.image_cache = ImageCache(limit=512)
+        self.image_cache = ImageCache(limit=1024)
+        self.page_size = max(1, self.settings_service.settings.page_size)
+        self.thumb_size = max(80, self.settings_service.settings.thumb_size)
+        self.preview_size = max(120, self.settings_service.settings.preview_size)
+        self.search_request_id = 0
+        self.pending_search_results: Queue[tuple[int, bool, object]] = Queue()
         self.current_items: list[dict] = []
         self.selected_path: str | None = None
         self.current_folder: str | None = None
@@ -100,10 +106,11 @@ class MainWindow(ctk.CTk):
             self.load_more,
             on_context=self.show_item_context,
             on_open=self.open_media,
+            thumb_size=self.thumb_size,
         )
         self.grid_view.grid(row=1, column=1, sticky="nsew", padx=(8, 8), pady=(8, 8))
 
-        self.details = DetailsPanel(self, self.image_cache, self.thumb_service, width=320)
+        self.details = DetailsPanel(self, self.image_cache, self.thumb_service, self.jobs, preview_size=self.preview_size, width=320)
         self.details.grid(row=1, column=2, sticky="nsew", padx=(0, 8), pady=(8, 8))
 
         self.status_var = ctk.StringVar(value="准备就绪")
@@ -138,6 +145,7 @@ class MainWindow(ctk.CTk):
         self._style_checkbox(self.sidebar.favorite_check)
 
         self.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.after(25, self._drain_search_results)
         self.refresh_sidebar()
         self.refresh_media()
 
@@ -173,24 +181,50 @@ class MainWindow(ctk.CTk):
             self.grid_view.set_selected_path(None)
             self.set_status("请先添加并选择目录")
             return
-        page_size = self.settings_service.settings.page_size
         filters = SearchFilters(
             query=self.toolbar.search_var.get().strip(),
             folder=self.current_folder,
             kind=None if self.sidebar.kind_var.get() == "all" else self.sidebar.kind_var.get(),
             favorite_only=self.sidebar.favorite_var.get(),
-            limit=page_size + 1,
+            limit=self.page_size + 1,
             offset=self.current_offset,
         )
-        items = self.search_service.search(filters)
-        self.has_more = len(items) > page_size
-        visible_items = items[:page_size]
+        self.search_request_id += 1
+        request_id = self.search_request_id
+        self.set_status("正在加载目录内容...")
+        future = self.jobs.submit(self.search_service.search, filters)
+        future.add_done_callback(lambda f, rid=request_id, do_reset=reset: self.pending_search_results.put((rid, do_reset, f)))
+
+    def _drain_search_results(self) -> None:
+        try:
+            while True:
+                request_id, reset, future = self.pending_search_results.get_nowait()
+                self._apply_search_results(request_id, reset, future)
+        except Empty:
+            pass
+        if self.winfo_exists():
+            self.after(25, self._drain_search_results)
+
+    def _apply_search_results(self, request_id: int, reset: bool, future) -> None:
+        if not self.winfo_exists() or request_id != self.search_request_id:
+            return
+        try:
+            items = future.result()
+        except Exception:
+            self.current_items = [] if reset else self.current_items
+            self.has_more = False
+            self.grid_view.render_items(self.current_items, False, reset=reset)
+            self.set_status("目录加载失败")
+            return
+        self.has_more = len(items) > self.page_size
+        visible_items = items[:self.page_size]
         for item in visible_items:
             self.repo.ensure_media_entry(Path(item["path"]))
         if reset:
             self.current_items = visible_items
         else:
-            self.current_items.extend(visible_items)
+            existing = {entry["path"] for entry in self.current_items}
+            self.current_items.extend(item for item in visible_items if item["path"] not in existing)
         self.grid_view.render_items(self.current_items, self.has_more, reset=reset)
         self.set_status(f"当前目录已加载 {len(self.current_items)} 个项目（递归子目录）")
         if self.selected_path:
@@ -201,7 +235,7 @@ class MainWindow(ctk.CTk):
     def load_more(self) -> None:
         if not self.has_more:
             return
-        self.current_offset += self.settings_service.settings.page_size
+        self.current_offset += self.page_size
         self.refresh_media(reset=False)
 
     def select_media(self, path: str) -> None:

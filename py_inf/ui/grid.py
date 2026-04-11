@@ -6,10 +6,13 @@ import tkinter as tk
 from queue import Empty, Queue
 
 import customtkinter as ctk
+from PIL import ImageTk
+
+from py_inf.services.cache import build_image_cache_key
 
 TILE_WIDTH = 220
 TILE_HEIGHT = 260
-THUMB_SIZE = 200
+DEFAULT_THUMB_SIZE = 200
 H_GAP = 16
 V_GAP = 16
 PADDING = 8
@@ -96,7 +99,7 @@ def _get_display_frequency() -> int | None:
 
 
 class MediaGrid(ctk.CTkFrame):
-    def __init__(self, master, image_cache, thumb_service, job_service, on_select, on_load_more, on_context=None, on_open=None, **kwargs):
+    def __init__(self, master, image_cache, thumb_service, job_service, on_select, on_load_more, on_context=None, on_open=None, thumb_size: int = DEFAULT_THUMB_SIZE, **kwargs):
         super().__init__(master, **kwargs)
         self.image_cache = image_cache
         self.thumb_service = thumb_service
@@ -105,6 +108,7 @@ class MediaGrid(ctk.CTkFrame):
         self.on_load_more = on_load_more
         self.on_context = on_context
         self.on_open = on_open
+        self.thumb_size = max(80, min(int(thumb_size), TILE_WIDTH - 20, 200))
 
         self.items: list[dict] = []
         self.columns = 4
@@ -124,8 +128,8 @@ class MediaGrid(ctk.CTkFrame):
         self.loading_phase = 0.0
         self.scroll_target_y = 0.0
         self.scroll_current_y = 0.0
-        self.refresh_rate_hz = self._detect_refresh_rate_hz()
-        self.tick_interval_ms = max(4, int(round(1000 / self.refresh_rate_hz)))
+        self.refresh_rate_hz = min(60, self._detect_refresh_rate_hz())
+        self.tick_interval_ms = max(8, int(round(1000 / self.refresh_rate_hz)))
         self.tick_scale = 60.0 / self.refresh_rate_hz
         self.last_start_x: int | None = None
         self.last_columns = self.columns
@@ -135,6 +139,7 @@ class MediaGrid(ctk.CTkFrame):
         self.grid_shift_target = 0.0
         self.path_layout_transitions: dict[str, dict[str, float]] = {}
         self.resize_after_id = None
+        self.visible_tiles_dirty = True
 
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(0, weight=1)
@@ -179,6 +184,7 @@ class MediaGrid(ctk.CTkFrame):
         self.has_more = has_more
         self._recompute_columns()
         self._update_scroll_region()
+        self.visible_tiles_dirty = True
         self._update_visible_tiles(force=True)
 
     def set_selected_path(self, path: str | None) -> None:
@@ -194,6 +200,8 @@ class MediaGrid(ctk.CTkFrame):
         animation_changed = self._step_animation_state()
         layout_changed = self._step_layout_animation()
         self._check_scroll_changes()
+        if self.visible_tiles_dirty:
+            self._update_visible_tiles(force=False)
         if scroll_changed or animation_changed or layout_changed:
             self._refresh_visible_tile_visuals()
         if self.winfo_exists():
@@ -221,7 +229,7 @@ class MediaGrid(ctk.CTkFrame):
         else:
             self.canvas.yview(*args)
         self._sync_scroll_targets()
-        self._update_visible_tiles(force=True)
+        self.visible_tiles_dirty = True
 
     def _on_mousewheel(self, event) -> str:
         if event.num == 4:
@@ -243,7 +251,7 @@ class MediaGrid(ctk.CTkFrame):
         self.scroll_target_y = max(0.0, min(total_height, self.scroll_target_y + delta_units * step))
         if abs(self.scroll_target_y - self.scroll_current_y) < 1:
             self.scroll_current_y = self.scroll_target_y
-        self._update_visible_tiles(force=True)
+        self.visible_tiles_dirty = True
 
     def _tile_path_at_current_item(self) -> str | None:
         current = self.canvas.find_withtag("current")
@@ -312,7 +320,7 @@ class MediaGrid(ctk.CTkFrame):
         signature = (round(y0, 4), height, width)
         if signature != self.last_scroll_signature:
             self.last_scroll_signature = signature
-            self._update_visible_tiles(force=False)
+            self.visible_tiles_dirty = True
 
     def _recompute_columns(self) -> None:
         width = max(self.canvas.winfo_width(), TILE_WIDTH + 2 * PADDING)
@@ -372,9 +380,11 @@ class MediaGrid(ctk.CTkFrame):
         end_index = min(len(self.items), (first_row + visible_rows) * self.columns)
         visible_range = (start_index, end_index)
         if not force and visible_range == self.last_range:
+            self.visible_tiles_dirty = False
             self._maybe_load_more(top_y, viewport_height, total_height)
             return
         self.last_range = visible_range
+        self.visible_tiles_dirty = False
 
         canvas_width = max(self.canvas.winfo_width(), TILE_WIDTH + 2 * PADDING)
         total_grid_width = self.columns * TILE_WIDTH + max(0, self.columns - 1) * H_GAP
@@ -418,7 +428,7 @@ class MediaGrid(ctk.CTkFrame):
 
         lift = int(round(hover_strength * 6 + selected_strength * 10 + reveal_strength * 4))
         image_inset = 10 - int(round(reveal_strength * 3))
-        image_size = THUMB_SIZE + int(round(reveal_strength * 6))
+        image_size = self.thumb_size + int(round(reveal_strength * 6))
         top = y - lift
 
         card_fill = _mix_color(CARD_COLOR, CARD_HOVER_COLOR, min(1.0, hover_strength * 0.85 + reveal_strength * 0.25))
@@ -450,7 +460,7 @@ class MediaGrid(ctk.CTkFrame):
         self.canvas.itemconfigure(tile["text_id"], text=item.get("filename", ""))
         if previous_path != path and previous_path == self.hover_path:
             self.hover_path = None
-        cache_key = f"grid:{path}"
+        cache_key = build_image_cache_key(path, size=(self.thumb_size, self.thumb_size), variant="grid")
         image = self.image_cache.get(cache_key)
         if image is not None:
             self.canvas.itemconfigure(tile["image_id"], image=image)
@@ -459,7 +469,7 @@ class MediaGrid(ctk.CTkFrame):
         if path in self.pending_paths:
             return
         self.pending_paths.add(path)
-        future = self.job_service.submit(self.thumb_service.load_image, path, (THUMB_SIZE, THUMB_SIZE), fit="contain")
+        future = self.job_service.submit(self.thumb_service.load_image, path, (self.thumb_size, self.thumb_size), fit="contain")
         future.add_done_callback(lambda f, tile_id=tile["index"], bound_path=path, key=cache_key: self.pending_results.put((tile_id, bound_path, key, f)))
 
     def _drain_pending_results(self) -> None:
@@ -478,7 +488,7 @@ class MediaGrid(ctk.CTkFrame):
             pil_image = None
         if pil_image is None:
             return
-        image = tk.PhotoImage(master=self.canvas, data=self._pil_to_png_data(pil_image))
+        image = ImageTk.PhotoImage(image=pil_image, master=self.canvas)
         self.image_cache.set(cache_key, image)
         self.reveal_strengths[path] = 1.0
         if tile_id < len(self.tiles):
@@ -488,13 +498,6 @@ class MediaGrid(ctk.CTkFrame):
         for tile in self.tiles:
             if tile.get("bound_path") == path:
                 self.canvas.itemconfigure(tile["image_id"], image=image)
-
-    def _pil_to_png_data(self, pil_image) -> bytes:
-        from io import BytesIO
-
-        buffer = BytesIO()
-        pil_image.save(buffer, format="PNG")
-        return buffer.getvalue()
 
     def _maybe_load_more(self, top_y: float, viewport_height: int, total_height: float) -> None:
         if not self.has_more:
