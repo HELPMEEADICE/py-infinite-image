@@ -53,7 +53,7 @@ class DetailsPanel(ctk.CTkFrame):
         self.content = ctk.CTkFrame(self, fg_color="transparent")
         self.content.place(relx=0, rely=0, relwidth=1, relheight=1, x=0, y=0)
         self.content.grid_rowconfigure(1, weight=1)
-        self.preview_label = ctk.CTkLabel(self.content, text="未选择项目", fg_color=PREVIEW_BG, corner_radius=16)
+        self.preview_label = tk.Label(self.content, text="未选择项目", bg=PREVIEW_BG, fg="white", bd=0, highlightthickness=0, compound="center")
         self.preview_label.grid(row=0, column=0, padx=10, pady=10, sticky="ew")
         self.text = ctk.CTkTextbox(self.content, width=280, fg_color=TEXTBOX_BG, corner_radius=12)
         self.text.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
@@ -70,7 +70,7 @@ class DetailsPanel(ctk.CTkFrame):
             self.preview_request_id += 1
             self.current_preview_key = None
             self.current_preview_image = None
-            self.preview_label.configure(text="未选择项目", image=None, fg_color=PREVIEW_BG)
+            self.preview_label.configure(text="未选择项目", image=None, bg=PREVIEW_BG)
             self.text.configure(fg_color=TEXTBOX_BG)
             self.text.insert("1.0", "")
             self.text.configure(state="disabled")
@@ -130,7 +130,7 @@ class DetailsPanel(ctk.CTkFrame):
             pil_image = None
         if pil_image is None:
             self.current_preview_image = None
-            self.preview_label.configure(text="无预览", image=None)
+            self.preview_label.configure(text="无预览", image=None, bg=PREVIEW_BG)
             return
         image = ImageTk.PhotoImage(image=pil_image, master=self.preview_label)
         self.image_cache.set(cache_key, image)
@@ -182,10 +182,10 @@ class DetailsPanel(ctk.CTkFrame):
     def _animate_preview_flash(self, step: int = 0) -> None:
         phases = [1.0, 0.72, 0.44, 0.2, 0.0]
         if step >= len(phases):
-            self.preview_label.configure(fg_color=PREVIEW_BG)
+            self.preview_label.configure(bg=PREVIEW_BG)
             self.preview_after_id = None
             return
-        self.preview_label.configure(fg_color=_mix_color(PREVIEW_BG, PREVIEW_FLASH, phases[step]))
+        self.preview_label.configure(bg=_mix_color(PREVIEW_BG, PREVIEW_FLASH, phases[step]))
         self.preview_after_id = self.after(42, lambda: self._animate_preview_flash(step + 1))
 
     def _animate_text_flash(self, step: int = 0) -> None:
