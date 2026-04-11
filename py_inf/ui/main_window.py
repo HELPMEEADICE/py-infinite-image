@@ -342,6 +342,8 @@ class MainWindow(ctk.CTk):
         menu.add_command(label="使用默认应用打开", command=lambda p=path: self.open_media(p))
         menu.add_command(label="使用文件管理器打开", command=lambda p=path: self.reveal_media(p))
         menu.add_command(label="查看 Meta Data", command=lambda p=path: self.select_media(p))
+        menu.add_command(label="复制 Prompt", command=lambda p=path: self.copy_prompt_for_path(p))
+        menu.add_command(label="复制反向 Prompt", command=lambda p=path: self.copy_negative_prompt_for_path(p))
         try:
             menu.tk_popup(x_root, y_root)
         finally:
@@ -371,9 +373,20 @@ class MainWindow(ctk.CTk):
         detail = self._selected_detail()
         if not detail:
             return
+        self._copy_prompt_text(detail.get("prompt") or "", "Prompt 已复制")
+
+    def copy_prompt_for_path(self, path: str) -> None:
+        metadata = extract_metadata(Path(path))
+        self._copy_prompt_text(metadata.prompt or "", "Prompt 已复制")
+
+    def copy_negative_prompt_for_path(self, path: str) -> None:
+        metadata = extract_metadata(Path(path))
+        self._copy_prompt_text(metadata.negative_prompt or "", "反向 Prompt 已复制")
+
+    def _copy_prompt_text(self, text: str, status: str) -> None:
         self.clipboard_clear()
-        self.clipboard_append(detail.get("prompt") or "")
-        self.set_status("Prompt 已复制")
+        self.clipboard_append(text)
+        self.set_status(status)
 
     def set_status(self, text: str) -> None:
         self.status_var.set(text)
