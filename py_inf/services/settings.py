@@ -18,6 +18,9 @@ class AppSettings:
     page_size: int = 60
     thumb_size: int = 220
     preview_size: int = 640
+    grid_cache_mb: int = 16
+    preview_cache_mb: int = 8
+    thumb_workers: int = 2
     last_query: str = ""
     theme: str = "dark"
 
@@ -35,7 +38,9 @@ class SettingsService:
             self.save(settings)
             return settings
         data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-        return AppSettings(**data)
+        defaults = asdict(AppSettings())
+        defaults.update(data)
+        return AppSettings(**defaults)
 
     def save(self, settings: AppSettings | None = None) -> None:
         if settings is not None:

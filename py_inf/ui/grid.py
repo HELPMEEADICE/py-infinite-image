@@ -469,7 +469,7 @@ class MediaGrid(ctk.CTkFrame):
         if path in self.pending_paths:
             return
         self.pending_paths.add(path)
-        future = self.job_service.submit(self.thumb_service.load_image, path, (self.thumb_size, self.thumb_size), fit="contain")
+        future = self.job_service.submit_thumb(self.thumb_service.load_image, path, (self.thumb_size, self.thumb_size), fit="contain")
         future.add_done_callback(lambda f, tile_id=tile["index"], bound_path=path, key=cache_key: self.pending_results.put((tile_id, bound_path, key, f)))
 
     def _drain_pending_results(self) -> None:

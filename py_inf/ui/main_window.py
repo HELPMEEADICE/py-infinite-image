@@ -14,7 +14,7 @@ from py_inf.data.repo import MediaRepository
 from py_inf.domain.favorites import FavoriteService
 from py_inf.domain.search import SearchFilters, SearchService
 from py_inf.domain.tags import TagService
-from py_inf.services.cache import ImageCache
+from py_inf.services.cache import ImageCache, mb_to_bytes
 from py_inf.services.jobs import JobService
 from py_inf.services.settings import SettingsService
 from py_inf.core.thumb import ThumbnailService
@@ -72,9 +72,10 @@ class MainWindow(ctk.CTk):
         self.tag_service = TagService(self.repo)
         self.favorite_service = FavoriteService(self.repo)
         self.thumb_service = ThumbnailService()
-        self.jobs = JobService()
+        self.jobs = JobService(thumb_workers=max(1, self.settings_service.settings.thumb_workers))
         self.file_ops = FileOps()
-        self.image_cache = ImageCache(limit=1024)
+        self.grid_image_cache = ImageCache(limit=256, limit_bytes=mb_to_bytes(self.settings_service.settings.grid_cache_mb))
+        self.preview_image_cache = ImageCache(limit=8, limit_bytes=mb_to_bytes(self.settings_service.settings.preview_cache_mb))
         self.page_size = max(1, self.settings_service.settings.page_size)
         self.thumb_size = max(80, self.settings_service.settings.thumb_size)
         self.preview_size = max(120, self.settings_service.settings.preview_size)
@@ -99,7 +100,7 @@ class MainWindow(ctk.CTk):
 
         self.grid_view = MediaGrid(
             self,
-            self.image_cache,
+            self.grid_image_cache,
             self.thumb_service,
             self.jobs,
             self.select_media,
@@ -110,7 +111,7 @@ class MainWindow(ctk.CTk):
         )
         self.grid_view.grid(row=1, column=1, sticky="nsew", padx=(8, 8), pady=(8, 8))
 
-        self.details = DetailsPanel(self, self.image_cache, self.thumb_service, self.jobs, preview_size=self.preview_size, width=320)
+        self.details = DetailsPanel(self, self.preview_image_cache, self.thumb_service, self.jobs, preview_size=self.preview_size, width=320)
         self.details.grid(row=1, column=2, sticky="nsew", padx=(0, 8), pady=(8, 8))
 
         self.status_var = ctk.StringVar(value="准备就绪")
@@ -157,11 +158,15 @@ class MainWindow(ctk.CTk):
             self.set_status(f"已添加目录: {folder}")
         if not self.current_folder:
             self.current_folder = folder
+        self.grid_image_cache.clear()
+        self.preview_image_cache.clear()
         self.refresh_sidebar()
         self.refresh_media(reset=True)
 
     def change_folder(self) -> None:
         self.current_folder = self.sidebar.folder_var.get() or None
+        self.grid_image_cache.clear()
+        self.preview_image_cache.clear()
         self._flash_option_menu(self.sidebar.folder_menu)
         self.refresh_media(reset=True)
 
@@ -177,6 +182,8 @@ class MainWindow(ctk.CTk):
         if not self.current_folder:
             self.current_items = []
             self.has_more = False
+            self.grid_image_cache.clear()
+            self.preview_image_cache.clear()
             self.grid_view.render_items([], False)
             self.grid_view.set_selected_path(None)
             self.set_status("请先添加并选择目录")

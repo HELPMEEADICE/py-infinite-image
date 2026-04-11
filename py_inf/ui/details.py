@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import tkinter as tk
+
 import customtkinter as ctk
+from PIL import ImageTk
 
 from py_inf.services.cache import build_image_cache_key
 
@@ -42,6 +45,7 @@ class DetailsPanel(ctk.CTkFrame):
         self.panel_flash_after_id = None
         self.preview_request_id = 0
         self.current_preview_key: str | None = None
+        self.current_preview_image: tk.PhotoImage | None = None
         self.last_width: int | None = None
         self.content_shift = 0.0
         self.settle_after_id = None
@@ -65,6 +69,7 @@ class DetailsPanel(ctk.CTkFrame):
         if not item:
             self.preview_request_id += 1
             self.current_preview_key = None
+            self.current_preview_image = None
             self.preview_label.configure(text="未选择项目", image=None, fg_color=PREVIEW_BG)
             self.text.configure(fg_color=TEXTBOX_BG)
             self.text.insert("1.0", "")
@@ -75,8 +80,10 @@ class DetailsPanel(ctk.CTkFrame):
         self.current_preview_key = cache_key
         image = self.image_cache.get(cache_key)
         if image is not None:
+            self.current_preview_image = image
             self.preview_label.configure(text="", image=image)
         else:
+            self.current_preview_image = None
             self.preview_label.configure(text="加载中...", image=None)
             self._request_preview(item["path"], cache_key)
         tags = item.get("tags") or ""
@@ -107,7 +114,7 @@ class DetailsPanel(ctk.CTkFrame):
         self.preview_request_id += 1
         request_id = self.preview_request_id
         target_size = self._preview_target_size()
-        future = self.job_service.submit(self.thumb_service.load_image, path, target_size, fit="preview")
+        future = self.job_service.submit_thumb(self.thumb_service.load_image, path, target_size, fit="preview")
         future.add_done_callback(lambda f, rid=request_id, key=cache_key: self.after(0, lambda: self._apply_preview_result(rid, key, f)) if self.winfo_exists() else None)
 
     def _preview_target_size(self) -> tuple[int, int]:
@@ -122,10 +129,12 @@ class DetailsPanel(ctk.CTkFrame):
         except Exception:
             pil_image = None
         if pil_image is None:
+            self.current_preview_image = None
             self.preview_label.configure(text="无预览", image=None)
             return
-        image = ctk.CTkImage(light_image=pil_image, dark_image=pil_image, size=pil_image.size)
+        image = ImageTk.PhotoImage(image=pil_image, master=self.preview_label)
         self.image_cache.set(cache_key, image)
+        self.current_preview_image = image
         if request_id == self.preview_request_id and cache_key == self.current_preview_key:
             self.preview_label.configure(text="", image=image)
 
